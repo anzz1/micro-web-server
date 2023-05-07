@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -220,11 +221,11 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 						
 						int userange = 1;
 						long long fstart = 0;
-						if (header_attr_lookup((char*)t->request_data, "Range:", crlf) < 0) {
+						if (header_attr_lookup((char*)t->request_data, "range:", crlf) < 0) {
 							userange = 0;
 							t->fend = LLONG_MAX;
 						}else{
-							if (parse_range_req(param_str,&fstart,&t->fend) < 0) {
+							if (parse_range_req(param_str, &fstart, &t->fend) < 0) {
 								userange = 0;
 								fstart = 0;
 								t->fend = LLONG_MAX;
@@ -234,7 +235,7 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 						// Auth
 						int auth_ok = 1;
 						if (auth_str[0] != 0) {
-							if (header_attr_lookup((char*)t->request_data, "Authorization:", crlf) >= 0) {
+							if (header_attr_lookup((char*)t->request_data, "authorization:", crlf) >= 0) {
 								if (strcmp(param_str, auth_str) != 0)
 									auth_ok = 0;
 							}
@@ -243,9 +244,9 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 						
 						if (auth_ok) {
 							int ishead = 0;
-							int isget = header_attr_lookup((char*)t->request_data, "GET ", " ") >= 0; // Get the file
+							int isget = header_attr_lookup((char*)t->request_data, "get ", " ") >= 0; // Get the file
 							if (!isget)
-								ishead = header_attr_lookup((char*)t->request_data, "HEAD ", " ") >= 0; // Get the file
+								ishead = header_attr_lookup((char*)t->request_data, "head ", " ") >= 0; // Get the file
 							char file_path[MAX_PATH_LEN*2];
 							int code = path_create(base_path, param_str, file_path);
 							if (!isget && !ishead) code = RTYPE_405;
@@ -304,7 +305,7 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 				else if (errno != EAGAIN && errno != EWOULDBLOCK)
 					force_end = 1;  // Some error, just close
 			}
-			
+
 			// HTTP RESPONSE BODY WRITE
 			if (t->status == STATUS_RESP && !force_end) {
 
@@ -410,39 +411,75 @@ int main (int argc, char ** argv) {
 	char sw_user[256] = "nobody";
 
 	int i;
+	int help = 0;
 	for (i = 1; i < argc; i++) {
 		// Port
-		if (strcmp(argv[i],"-p") == 0)
-			sscanf(argv[++i], "%d", &port);
+		if (strcmp(argv[i],"-p") == 0) {
+			if (++i >= argc || sscanf(argv[i], "%d", &port) != 1) {
+				help = 1;
+				break;
+			}
+		}
 		// Timeout
-		if (strcmp(argv[i],"-t") == 0)
-			sscanf(argv[++i], "%d", &timeout);
+		if (strcmp(argv[i],"-t") == 0) {
+			if (++i >= argc || sscanf(argv[i], "%d", &timeout) != 1) {
+				help = 1;
+				break;
+			}
+		}
 		// Base dir
-		if (strcmp(argv[i],"-d") == 0)
-			strcpy(base_path, argv[++i]);
-		// Dir list
-		if (strcmp(argv[i],"-l") == 0)
-			dirlist = 1;
+		if (strcmp(argv[i],"-d") == 0) {
+			if (++i >= argc) {
+				help = 1;
+				break;
+			}
+			int x;
+			for (x = 0; argv[i][x]; x++) {
+				base_path[x] = argv[i][x];
+			}
+			base_path[x] = 0;
+			while (--x >= 0 && base_path[x] == '/') {
+				base_path[x] = 0;
+			}
+		}
 		// User drop
-		if (strcmp(argv[i],"-u") == 0)
-			strcpy(sw_user, argv[++i]);
+		if (strcmp(argv[i],"-u") == 0) {
+			if (++i >= argc) {
+				help = 1;
+				break;
+			}
+			strcpy(sw_user, argv[i]);
+		}
 		// Auth
-		if (strcmp(argv[i],"-a") == 0)
-			strcpy(auth_str, argv[++i]);
+		if (strcmp(argv[i],"-a") == 0) {
+			if (++i >= argc) {
+				help = 1;
+				break;
+			}
+			strcpy(auth_str, argv[i]);
+		}
+		// Dir list
+		if (strcmp(argv[i],"-l") == 0) {
+			dirlist = 1;
+		}
 		// Help
 		if (strcmp(argv[i],"-h") == 0) {
-			printf("Usage: server [-p port] [-t timeout] [-d base_dir] [-u user]\n"
-			"    -p     Port             (Default port is 80)\n"
-			"    -t     Timeout          (Default timeout is 8 seconds of network inactivity)\n"
-			"    -d     Base Dir         (Default dir is working dir)\n"
-			"    -l     Enable dir lists (Off by default for security reasons)\n"
-			"    -u     Switch to user   (Switch to specified user (may drop privileges, by default nobody))\n"
-			"    -a     HTTP Auth        (Specify an auth string, i.e. \"Basic dXNlcjpwYXNz\")\n"
-			);
-			exit(0);
+			help = 1;
+			break;
 		}
 	}
-	
+	if (help) {
+		printf("Usage: server [-p port] [-t timeout] [-d base_dir] [-u user]\n"
+		"    -p     Port             (Default port is 80)\n"
+		"    -t     Timeout          (Default timeout is 8 seconds of network inactivity)\n"
+		"    -d     Base Dir         (Default dir is working dir)\n"
+		"    -l     Enable dir lists (Off by default for security reasons)\n"
+		"    -u     Switch to user   (Switch to specified user (may drop privileges, by default nobody))\n"
+		"    -a     HTTP Auth        (Specify an auth string, i.e. \"Basic dXNlcjpwYXNz\")\n"
+		);
+		exit(0);
+	}
+
 	// Bind port!
 	struct sockaddr_in servaddr;
 
@@ -465,8 +502,6 @@ int main (int argc, char ** argv) {
 	}
 	setgid(pw->pw_gid);
 	setuid(pw->pw_uid);
-	
+
 	server_run(port, timeout, base_path, dirlist);
 }
-
-
