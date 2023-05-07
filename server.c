@@ -405,7 +405,7 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 }
 
 int main (int argc, char ** argv) {
-	int port = 80, timeout = 8, dirlist = 0;
+	int port = 8080, timeout = 8, dirlist = 0;
 	char base_path[MAX_PATH_LEN] = {0};
 	getcwd(base_path, MAX_PATH_LEN-1);
 	char sw_user[256] = "nobody";
@@ -438,6 +438,11 @@ int main (int argc, char ** argv) {
 				base_path[x] = argv[i][x];
 			}
 			base_path[x] = 0;
+			while (--x >= 0 && (base_path[x] == ' ' || base_path[x] == '\t' || 
+								base_path[x] == '\r' || base_path[x] == '\n')) {
+				base_path[x] = 0;
+			}
+			x++;
 			while (--x >= 0 && base_path[x] == '/') {
 				base_path[x] = 0;
 			}
@@ -470,7 +475,7 @@ int main (int argc, char ** argv) {
 	}
 	if (help) {
 		printf("Usage: server [-p port] [-t timeout] [-d base_dir] [-u user]\n"
-		"    -p     Port             (Default port is 80)\n"
+		"    -p     Port             (Default port is 8080)\n"
 		"    -t     Timeout          (Default timeout is 8 seconds of network inactivity)\n"
 		"    -d     Base Dir         (Default dir is working dir)\n"
 		"    -l     Enable dir lists (Off by default for security reasons)\n"

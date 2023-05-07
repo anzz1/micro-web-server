@@ -196,8 +196,6 @@ int path_create(const char * base_path, const char * req_file, char * out_file) 
 	*p++ = '/';
 	*p = 0;
 	p += urldecode(p, temp);
-	
-	puts(out_file);
 
 	// Check whether we have a directory or a file
 	struct stat path_stat;
