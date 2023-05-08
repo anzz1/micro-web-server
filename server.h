@@ -1,20 +1,39 @@
 
 #define _FILE_OFFSET_BITS 64
 
-#include <sys/types.h>
-#include <sys/socket.h>
+#ifdef _WIN32
+//#define WINVER 0x600
+//#define _WIN32_WINNT 0x600
+#define _CRT_NONSTDC_NO_WARNINGS
+#define _CRT_SECURE_NO_WARNINGS
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <winsock2.h>
+#include <direct.h>
+#include "w32_dirent.h"
+#pragma comment (lib, "ws2_32.lib")
+#else
+#include <dirent.h>
+#include <errno.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
+#include <poll.h>
+#include <pwd.h>
+#include <unistd.h>
+#endif
+
+#include <assert.h>
+#include <limits.h>
+#include <signal.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <poll.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <time.h>
-#include <signal.h>
-#include <limits.h>
-#include <pwd.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
+
+#include "server_config.h"
 
 #ifndef LLONG_MAX
 	#define LLONG_MAX 2094967295
@@ -25,9 +44,10 @@
 #define RTYPE_FIL    2
 #define RTYPE_405    3
 #define RTYPE_403    4
+#define RTYPE_400    5
 
-int urldecode (char * dest, const char *url);
-char* __stristr(const char* s1, const char* s2);
+void urldecode (char * dest, const char *url);
+char* stristr2(const char* s1, const char* s2);
 
 #define RETURN_STRBUF(task, buffer) \
 	{ \
@@ -38,13 +58,13 @@ char* __stristr(const char* s1, const char* s2);
 // writes to param_str the value of the parameter in the request trimming whitespaces
 static char param_str[REQUEST_MAX_SIZE*3];
 int header_attr_lookup(const char * request, const char * param, const char * param_end) {
-	char * ptr = __stristr(request,param);  // ptr to the parameter line
+	char * ptr = stristr2(request,param);  // ptr to the parameter line
 	if (ptr == 0)
 		return -1;
 	ptr += strlen(param);  // ptr now points to the start of the data
 	while (*ptr == ' ') ptr++;  // trim whitespaces
 
-	char * ptr2 = __stristr(ptr,param_end);   // ptr to the end of the line
+	char * ptr2 = stristr2(ptr,param_end);   // ptr to the end of the line
 	if (ptr2 == 0)
 		return -1;
 
@@ -56,22 +76,22 @@ int header_attr_lookup(const char * request, const char * param, const char * pa
 	return len;  // Returns the size of the parameter
 }
 
-unsigned generate_dir_entry(void * out, const struct dirent * ep) {
-	const char * slash = ep->d_type == DT_DIR ? "/" : "";
-	#ifdef HTMLLIST
-		sprintf((char*)out, "<a href=\"%s%s\">%s%s</a><br>\n", ep->d_name, slash, ep->d_name, slash);
-	#else
-		sprintf((char*)out, "%s%s\n", ep->d_name, slash);
-	#endif
+unsigned int generate_dir_entry(void* out, const struct dirent* ep) {
+	const char* slash = ep->d_type == DT_DIR ? "/" : "";
+#ifdef HTMLLIST
+	sprintf((char*)out, "<a href=\"%s%s\">%s%s</a><br>\n", ep->d_name, slash, ep->d_name, slash);
+#else
+	sprintf((char*)out, "%s%s\n", ep->d_name, slash);
+#endif
 	return strlen((char*)out);
 }
 
-unsigned dirlist_size(const char * file_path) {
-	char tmp[4*1024];
+unsigned int dirlist_size(const char* file_path) {
+	char tmp[4 * 1024];
 	unsigned r = 0;
-	DIR * d = opendir(file_path);
+	DIR* d = opendir(file_path);
 	while (1) {
-		struct dirent *ep = readdir(d);
+		struct dirent* ep = readdir(d);
 		if (!ep) break;
 
 		r += generate_dir_entry(tmp, ep);
@@ -80,7 +100,7 @@ unsigned dirlist_size(const char * file_path) {
 	return r;
 }
 
-int parse_range_req(const char * req_val, long long * start, long long * end) {
+int parse_range_req(const char* req_val, long long* start, long long* end) {
 	// Req_val will be something like:
 	// bytes=120-   (download from byte 120 to the end)
 	// bytes=-120   (download the last 120 bytes)
@@ -97,7 +117,7 @@ int parse_range_req(const char * req_val, long long * start, long long * end) {
 		return -1;
 
 	// Strip bytes prefix
-	const char * ptr = strchr(req_val, '=');
+	const char* ptr = strchr(req_val, '=');
 	if (ptr == 0) ptr = req_val;
 	else ptr++; //Skip "="
 
@@ -107,10 +127,10 @@ int parse_range_req(const char * req_val, long long * start, long long * end) {
 	if (*ptr == 0) return -1; // Empty!!!
 
 	// Read the start
-	sscanf(ptr,"%lld %*s",start);
+	sscanf(ptr, "%lld %*s", start);
 	if (*start < 0) return -1;
 
-	// Search for "-" 
+	// Search for "-"
 	ptr = strchr(ptr, '-');
 	if (ptr == 0)
 		return 0;  // No "-" present, assuming EOF
@@ -124,7 +144,7 @@ int parse_range_req(const char * req_val, long long * start, long long * end) {
 		return 0;  // assuming EOF
 
 	// Read the end
-	sscanf(ptr,"%lld %*s",end);
+	sscanf(ptr, "%lld %*s", end);
 
 	// Both should be positive values, being start >= end
 	if (*end < 0 || *start > *end) return -1;
@@ -133,74 +153,57 @@ int parse_range_req(const char * req_val, long long * start, long long * end) {
 }
 
 // strcpy with overlap buffers
-void strcpy_o(char * dest, char * src) {
+void strcpy_o(char* dest, char* src) {
 	while (*src != 0) {
 		*dest++ = *src++;
 	}
 	*dest = 0;
 }
 
-int path_create(const char * base_path, const char * req_file, char * out_file) {
-	char temp[ strlen(req_file)+1 ];
-	strcpy(temp, req_file);
+int path_create(const char* base_path, const char* req_file, char* out_file) {
+	int i, j;
+	char* temp = malloc(strlen(req_file) + 1);
 
-	int i,j;
-	// Remove double slashes
-	for (i = 0; i < (int)strlen(temp)-1; i++) {
-		if (temp[i] == '/' && temp[i+1] == '/') {
-			strcpy_o(&temp[i], &temp[i+1]);
-			i--;
+	urldecode(temp, req_file);
+
+	for (i = 0, j = 0; temp[i]; i++, j++) {
+		while ((temp[i] == '/' || temp[i] == '\\') && (temp[i + 1] == '/' || temp[i + 1] == '\\')) i++;
+		if  (temp[i] < 0x20 || (temp[i] == '.' && temp[i + 1] == '.' && (temp[i + 2] == '/' || temp[i + 2] == '\\'))) {
+			free(temp);
+			return RTYPE_400;
 		}
-	}
-	// Remove .. by removing previous dir
-	for (i = 0; i < (int)strlen(temp)-4; i++) {
-		if (temp[i] == '/' && temp[i+1] == '.' && 
-			temp[i+2] == '.' && temp[i+3] == '/') {
-
-			// Remove previous folder
-			for (j = i-1; j >= 0; j--) {
-				if (temp[j] == '/' || j == 0) {
-					strcpy_o(&temp[j], &temp[i+3]);
-					i = -1;
-					break;
-				}
-			}
-		}
-	}
-	// Remove the remaining .. (prevent going up base_dir)
-	for (i = 0; i < (int)strlen(temp)-4; i++) {
-		if (temp[i] == '/' && temp[i+1] == '.' && 
-			temp[i+2] == '.' && temp[i+3] == '/') {
-
-			// Remove previous folder
-			strcpy_o(&temp[i],&temp[i+3]);
-			i--;
-		}
-	}
-
-	if (temp[0] == '/')
-		strcpy_o(&temp[0],&temp[1]);
-
-	// Remove everything after the '?' since it's just arguments for the script (or cache busters!)
-	for (i = 0; i < (int)strlen(temp); i++) {
-		if (temp[i] == '?') {
-			temp[i] = 0;
+		if (temp[i] == '\\') {
+			temp[i] = '/';
+		} else if (temp[i] == '?') {
+			temp[j] = 0;
 			break;
 		}
+		if (j != i) temp[j] = temp[i];
 	}
+	if (j > 0 && temp[j - 1] == '.') {
+		free(temp);
+		return RTYPE_400;
+	}
+	temp[j] = 0;
 
 	char* p = out_file;
 	for (i = 0; base_path[i]; i++) {
 		*p++ = base_path[i];
 	}
-	*p++ = '/';
+	if (temp[0] != '/') *p++ = '/';
+	for (i = 0; temp[i]; i++) {
+		*p++ = temp[i];
+	}
 	*p = 0;
-	p += urldecode(p, temp);
+	free(temp);
+
+	//puts(out_file);
 
 	// Check whether we have a directory or a file
 	struct stat path_stat;
 	stat(out_file, &path_stat);
 	if (S_ISDIR(path_stat.st_mode)) {
+		if (*(p-1) != '/') *p++ = '/';
 		strcpy(p, DEFAULT_DOC);
 
 		// Try the index first
@@ -210,20 +213,20 @@ int path_create(const char * base_path, const char * req_file, char * out_file) 
 			return RTYPE_FIL;
 		}
 		*p = 0;
-	}
 
-	// Try to open the dir
-	void * ptr = opendir(out_file);
-	if (ptr) {
-		closedir(ptr);
-		return RTYPE_DIR;
-	}
-
-	// Try as file
-	FILE * fd = fopen(out_file, "rb");
-	if (fd) {
-		fclose(fd);
-		return RTYPE_FIL;
+		// Try to open the dir
+		void* ptr = opendir(out_file);
+		if (ptr) {
+			closedir(ptr);
+			return RTYPE_DIR;
+		}
+	} else {
+		// Try as file
+		FILE* fd = fopen(out_file, "rb");
+		if (fd) {
+			fclose(fd);
+			return RTYPE_FIL;
+		}
 	}
 
 	return RTYPE_404;
@@ -253,7 +256,7 @@ int ishexpair(const char * i) {
 	return 1;
 }
 
-int urldecode (char * dest, const char *url) {
+void urldecode (char * dest, const char *url) {
 	int s = 0, d = 0;
 	int url_len = strlen (url) + 1;
 
@@ -277,11 +280,10 @@ int urldecode (char * dest, const char *url) {
 			dest[d++] = c;
 		}
 	}
-	return d-1;
 }
 
 // s2 should be in lowercase
-char* __stristr(const char* s1, const char* s2) {
+char* stristr2(const char* s1, const char* s2) {
 	unsigned int i;
 	char *p;
 	for (p = (char*)s1; *p != 0; p++) {
@@ -293,4 +295,15 @@ char* __stristr(const char* s1, const char* s2) {
 		} while (++i);
 	}
 	return 0;
+}
+
+// s2 should be in lowercase
+static int stricmp2(const char* s1, const char* s2) {
+  unsigned int i;
+  for (i = 0; s1[i]; i++) {
+	char c = (s1[i] > 64 && s1[i] < 91) ? s1[i]+32 : s1[i];
+    if (c > s2[i]) return 1;
+    else if (c < s2[i]) return -1;
+  }
+  return (s2[i] ? -1 : 0);
 }

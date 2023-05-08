@@ -15,19 +15,19 @@ struct mime_type {
 	const char *mime_type;
 } mtypes[] = {
 	{"",		"application/octet-stream"},  // Default mime type
-	{"htm",		"text/html"},
-	{"html",	"text/html"},
+	{"avi",		"video/x-msvideo"},
+	{"bmp",		"image/bmp"},
 	{"css",		"text/css"},
 	{"gif",		"image/gif"},
-	{"png",		"image/png"},
-	{"js",		"application/javascript"},
-	{"jpg",		"image/jpeg"},
+	{"htm",		"text/html"},
+	{"html",	"text/html"},
 	{"jpeg",	"image/jpeg"},
-	{"bmp",		"image/bmp"},
-	{"xml",		"text/xml"},
+	{"jpg",		"image/jpeg"},
+	{"js",		"text/javascript"},
+	{"json",	"application/json"},
 	{"mp3",		"audio/mpeg"},
-	{"mod",		"video/mp4"},
-	{"avi",		"video/x-msvideo"}
+	{"mp4",		"video/mp4"},
+	{"png",		"image/png"},
+	{"txt",		"text/plain"},
+	{"xml",		"text/xml"}
 };
-
-
