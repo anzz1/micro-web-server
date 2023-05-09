@@ -152,14 +152,6 @@ int parse_range_req(const char* req_val, long long* start, long long* end) {
 	return 0;
 }
 
-// strcpy with overlap buffers
-void strcpy_o(char* dest, char* src) {
-	while (*src != 0) {
-		*dest++ = *src++;
-	}
-	*dest = 0;
-}
-
 int path_create(const char* base_path, const char* req_file, char* out_file) {
 	int i, j;
 	char* temp = malloc(strlen(req_file) + 1);
