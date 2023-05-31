@@ -428,7 +428,7 @@ int main(int argc, char** argv) {
 	int port = 8080, timeout = 8, dirlist = 0;
 	char base_path[MAX_PATH_LEN] = { 0 };
 	getcwd(base_path, MAX_PATH_LEN - 1);
-#ifndef _WIN32
+#ifdef HAVE_SETUID
 	char sw_user[256] = "nobody";
 #endif
 
@@ -486,7 +486,7 @@ int main(int argc, char** argv) {
 			help = 1;
 			break;
 		}
-#ifndef _WIN32
+#ifdef HAVE_SETUID
 		// User drop
 		if (strcmp(argv[i], "-u") == 0) {
 			if (++i >= argc) {
@@ -498,15 +498,16 @@ int main(int argc, char** argv) {
 #endif
 	}
 	if (help) {
-		printf("Usage: server [-p port] [-t timeout] [-d base_dir] [-u user]\n"
-			"    -p     Port             (Default port is 8080)\n"
-			"    -t     Timeout          (Default timeout is 8 seconds of network inactivity)\n"
-			"    -d     Base Dir         (Default dir is working dir)\n"
-			"    -l     Enable dir lists (Off by default for security reasons)\n"
-			"    -a     HTTP Auth        (Specify an auth string, i.e. \"Basic dXNlcjpwYXNz\")\n"
-#ifndef _WIN32
-			"    -u     Switch to user   (Switch to specified user (may drop privileges, by default nobody))\n"
+		printf("Usage: server [-p port] ...\n"
+			"    -p PORT       Port                     (8080)\n"
+			"    -t SECONDS    Timeout                  (8 seconds)\n"
+			"    -d DIR        Base Dir                 (working dir)\n"
+			"    -l            Enable dir lists         (off)\n"
+#ifdef HAVE_SETUID
+			"    -u USER       Switch to user           (nobody)\n"
 #endif
+			"    -a STRING     HTTP Auth string, i.e.   (none)\n"
+			"                   \"Basic dXNlcjpwYXNz\"\n"
 		);
 		exit(0);
 	}
@@ -534,7 +535,7 @@ int main(int argc, char** argv) {
 		exit(1);
 	}
 
-#ifndef _WIN32
+#ifdef HAVE_SETUID
 	// Switch to user, unless empty or '-'
 	if (sw_user[0] && (sw_user[0] != '-' || sw_user[1])) {
 		struct passwd* pw = getpwnam(sw_user);
