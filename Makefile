@@ -1,12 +1,15 @@
 
-all:
-	gcc -O2 -ggdb -o server server.c -Wall
-	strip -s server
+CC     ?= cc
+STRIP  ?= strip
+CFLAGS ?= -O2 -Wall
+
+TARGET = server
+
+$(TARGET):
+	$(CC) $(CFLAGS) -o $(TARGET) server.c
+	$(STRIP) -s $(TARGET)
+
+all: $(TARGET)
 
 clean:
-	rm -f server regression
-
-.PHONY:	regression
-regression:
-	gcc -O0 -o regression tests/regression.c -I . -ggdb
-
+	rm -f $(TARGET)
