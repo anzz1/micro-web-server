@@ -1,32 +1,6 @@
-
+// server.c
 
 #include "server.h"
-
-#ifdef _WIN32
-#define poll				WSAPoll
-#define ioctl				ioctlsocket
-#define ftello				_ftelli64
-#define fseeko				_fseeki64
-#define POLLIN				(POLLRDNORM | POLLRDBAND)
-#define POLLOUT				(POLLWRNORM)
-#ifdef _MSC_VER
-#pragma warning(disable:4133)
-#endif
-#else
-#include <fcntl.h>
-#ifndef O_NONBLOCK
-#include <sys/ioctl.h>
-#endif
-#define closesocket			close
-#define send(a,b,c,d)		write(a,b,c)
-#define recv(a,b,c,d)		read(a,b,c)
-#endif
-
-#define STATUS_REQ         0
-#define STATUS_RESP        1
-
-const char *crlf_crlf = "\r\n\r\n";
-const char *crlf = "\r\n";
 
 const char ok_200[]  = "HTTP/1.1 200 OK\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 const char err_400[] = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
@@ -36,8 +10,11 @@ const char err_404[] = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
 const char err_405[] = "HTTP/1.1 405 Method not allowed\r\nConnection: close\r\n\r\n";
 const char partial_206[]  = "HTTP/1.1 206 Partial content\r\nContent-Range: bytes %lld-%lld/%lld\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 
-const char dirlist_200_txt[]  = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %u\r\nX-Directory: true\r\nConnection: close\r\n\r\n";
-const char dirlist_200_html[]  = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %u\r\nX-Directory: true\r\nConnection: close\r\n\r\n";
+#ifdef HTMLLIST
+const char dirlist_200[]  = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %u\r\nX-Directory: true\r\nConnection: close\r\n\r\n";
+#else
+const char dirlist_200[]  = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %u\r\nX-Directory: true\r\nConnection: close\r\n\r\n";
+#endif
 
 // Temporary buffer for main thread usage
 char tbuffer[WR_BLOCK_SIZE];
@@ -71,7 +48,8 @@ int setNonblocking(int fd) {
 #ifdef O_NONBLOCK
 	/* If they have O_NONBLOCK, use the Posix way to do it */
 	/* Fixme: O_NONBLOCK is defined but broken on SunOS 4.1.x and AIX 3.2.5. */
-	if (-1 == (flags = fcntl(fd, F_GETFL, 0)))
+	flags = fcntl(fd, F_GETFL, 0);
+	if (flags == -1)
 		flags = 0;
 	return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 #else
@@ -79,32 +57,6 @@ int setNonblocking(int fd) {
 	flags = 1;
 	return ioctl(fd, FIONBIO, &flags);
 #endif
-}
-
-const char* mime_lookup(char* file) {
-	char* extension = &file[strlen(file) - 1];
-	while (*extension != '.') {
-		if (extension == file)
-			return mtypes[0].mime_type;  // No extension, default type
-		extension--;
-	}
-	// Skip dot
-	extension++;
-
-	for (unsigned i = 1; i < sizeof(mtypes) / sizeof(struct mime_type); i++) {
-		if (!stricmp2(extension, mtypes[i].extension)) {
-			return mtypes[i].mime_type;
-		}
-	}
-	return mtypes[0].mime_type;  // Not found, defaulting
-}
-
-long long lof(FILE * fd) {
-	long long pos = ftello(fd);
-	fseeko(fd,0,SEEK_END);
-	long long len = ftello(fd);
-	fseeko(fd,pos,SEEK_SET);
-	return len;
 }
 
 void process_exit(int signal) {
@@ -146,12 +98,12 @@ int sock_error() {
 }
 
 
-void server_run (int port, int ctimeout, char * base_path, int dirlist) {
+void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist) {
 	signal (SIGTERM, process_exit);
 	signal (SIGINT, process_exit);
 #ifndef _WIN32
 	signal(SIGHUP, process_exit);
-	signal (SIGPIPE, SIG_IGN);
+	signal(SIGPIPE, SIG_IGN);
 #endif
 
 	int num_active_clients = 0;
@@ -159,12 +111,23 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 
 	/* Force the network socket into nonblocking mode */
 	if (setNonblocking(listenfd) < 0) {
-		printf("Error while trying to go NON-BLOCKING\n"); exit(1);
+		puts("ERROR: Could not set socket to non-blocking mode");
+#ifdef _WIN32
+		WSACleanup();
+#endif
+		exit(1);
 	}
 
 	if(listen(listenfd,5) < 0) {
-		printf("Error listening on the port\n"); perror("listen"); exit(1);
+		printf("ERROR: Could not listen to port: %u\n", port);
+		perror("listen");
+#ifdef _WIN32
+		WSACleanup();
+#endif
+		exit(1);
 	}
+
+	printf("Server started on port %u\n", port);
 
 	for (i = 0; i < MAXCLIENTS+1; i++) {
 		fdtable[i].fd = -1;
@@ -230,7 +193,7 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 					// Put null ends
 					t->request_data[t->request_size] = 0;
 					// Check request end, ignore the body!
-					if (strstr((char*)t->request_data, crlf_crlf) != 0) {
+					if (strstr((char*)t->request_data, "\r\n\r\n") != 0) {
 						// We got all the header, reponse now!
 						t->status = STATUS_RESP;
 						fdtable[fdtable_lookup(t->fd)].events = POLLOUT;
@@ -238,7 +201,7 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 
 						int userange = 1;
 						long long fstart = 0;
-						if (header_attr_lookup((char*)t->request_data, "range:", crlf) < 0) {
+						if (header_attr_lookup((char*)t->request_data, "range:", "\r\n") < 0) {
 							userange = 0;
 							t->fend = LLONG_MAX;
 						} else {
@@ -252,7 +215,7 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 						// Auth
 						int auth_ok = 1;
 						if (auth_str[0] != 0) {
-							if (header_attr_lookup((char*)t->request_data, "authorization:", crlf) < 0 || strcmp(param_str, auth_str)) {
+							if (header_attr_lookup((char*)t->request_data, "authorization:", "\r\n") < 0 || strcmp(param_str, auth_str)) {
 								auth_ok = 0;
 							}
 						}
@@ -263,8 +226,8 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 							int ishead = 0;
 							int code = RTYPE_405;
 							char file_path[MAX_PATH_LEN * 2];
-							int isget = header_attr_lookup((char*)t->request_data, "get ", " ") >= 0; // Get the file
-							if (!isget) ishead = header_attr_lookup((char*)t->request_data, "head ", " ") >= 0; // Get the file
+							int isget = (header_attr_lookup((char*)t->request_data, "get ", " ") >= 0); // Get the file
+							if (!isget) ishead = (header_attr_lookup((char*)t->request_data, "head ", " ") >= 0); // Get the file
 
 							if (isget || ishead) {
 								code = path_create(base_path, param_str, file_path);
@@ -287,34 +250,34 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 								case RTYPE_DIR:  // Dir
 									if (!ishead)
 										t->dirlist = opendir(file_path);
-#ifdef HTMLLIST
-									sprintf((char*)t->request_data, dirlist_200_html, dirlist_size(file_path));
-#else
-									sprintf((char*)t->request_data, dirlist_200_txt, dirlist_size(file_path));
-#endif
+									sprintf((char*)t->request_data, dirlist_200, dirlist_size(file_path));
 									t->request_size = strlen((char*)t->request_data);
 									break;
 								case RTYPE_FIL: // File
 								{
 									FILE* fd = fopen(file_path, "rb");
-									long long len = lof(fd);
-									const char* mimetype = mime_lookup(file_path);
-									if (t->fend > len - 1) t->fend = len - 1;  // Last byte, not size
-									long long content_length = t->fend - fstart + 1;
-
-									if (userange && isget) {
-										sprintf((char*)t->request_data, partial_206, fstart, t->fend, len, content_length, mimetype);
-										t->request_size = strlen((char*)t->request_data);
+									if (!fd) {
+										force_end = 1;
 									} else {
-										sprintf((char*)t->request_data, ok_200, content_length, mimetype);
-										t->request_size = strlen((char*)t->request_data);
-									}
+										long long len = lof(fd);
+										const char* mimetype = mime_lookup(file_path);
+										if (t->fend > len - 1) t->fend = len - 1;  // Last byte, not size
+										long long content_length = t->fend - fstart + 1;
 
-									if (ishead) {
-										fclose(fd);
-									} else {
-										t->fdfile = fd;
-										fseeko(fd, fstart, SEEK_SET); // Seek the first byte
+										if (userange && isget) {
+											sprintf((char*)t->request_data, partial_206, fstart, t->fend, len, content_length, mimetype);
+											t->request_size = strlen((char*)t->request_data);
+										} else {
+											sprintf((char*)t->request_data, ok_200, content_length, mimetype);
+											t->request_size = strlen((char*)t->request_data);
+										}
+
+										if (ishead) {
+											fclose(fd);
+										} else {
+											t->fdfile = fd;
+											fseeko(fd, fstart, SEEK_SET); // Seek the first byte
+										}
 									}
 									break;
 								}
@@ -329,7 +292,6 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 
 			// HTTP RESPONSE BODY WRITE
 			if (t->status == STATUS_RESP && !force_end) {
-
 				if (t->offset == t->request_size) { // Try to feed more data into the buffers
 					// Fetch some data from the file
 					if (t->fdfile) {
@@ -383,7 +345,8 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 
 			// Connection timeouts
 			if (ctimeout > 0) {
-				time_t cur_time; time(&cur_time);
+				time_t cur_time;
+				time(&cur_time);
 				if (cur_time-t->start_time > ctimeout)
 					force_end = 1;
 			}
@@ -400,10 +363,11 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 						break;
 					}
 				}
-				if (t->fdfile != 0)
+				if (t->fdfile) {
 					fclose(t->fdfile);
+					t->fdfile = 0;
+				}
 				t->fd = -1;
-				t->fdfile = 0;
 				num_active_clients--;
 
 				// Remove from procesing list
@@ -425,80 +389,96 @@ void server_run (int port, int ctimeout, char * base_path, int dirlist) {
 }
 
 int main(int argc, char** argv) {
-	int port = 8080, timeout = 8, dirlist = 0;
-	char base_path[MAX_PATH_LEN] = { 0 };
-	getcwd(base_path, MAX_PATH_LEN - 1);
+	unsigned int port = 8080;
+	int timeout = 8;
+	int dirlist = 0;
+	char base_path[MAX_PATH_LEN + 1] = {0};
 #ifdef HAVE_SETUID
 	char sw_user[256] = "nobody";
 #endif
+
+	if (!getcwd(base_path, MAX_PATH_LEN)) {
+		puts("ERROR: Could not get current working directory");
+		perror("getcwd");
+		exit(1);
+	}
 
 	int i;
 	int help = 0;
 	for (i = 1; i < argc; i++) {
 		// Port
-		if (strcmp(argv[i], "-p") == 0) {
-			if (++i >= argc || sscanf(argv[i], "%d", &port) != 1) {
+		if (!strcmp(argv[i], "-p") || !strcmp(argv[i], "--port")) {
+			if (++i >= argc || sscanf(argv[i], "%u", &port) != 1) {
 				help = 1;
 				break;
 			}
 		}
 		// Timeout
-		if (strcmp(argv[i], "-t") == 0) {
+		if (!strcmp(argv[i], "-t") || !strcmp(argv[i], "--timeout")) {
 			if (++i >= argc || sscanf(argv[i], "%d", &timeout) != 1) {
 				help = 1;
 				break;
 			}
 		}
 		// Base dir
-		if (strcmp(argv[i], "-d") == 0) {
+		if (!strcmp(argv[i], "-d") || !strcmp(argv[i], "--dir")) {
 			if (++i >= argc) {
 				help = 1;
 				break;
 			}
 			int x;
-			for (x = 0; argv[i][x]; x++) {
+			for (x = 0; argv[i][x] && x < MAX_PATH_LEN; x++) {
 				base_path[x] = argv[i][x];
+			}
+			if (x == MAX_PATH_LEN) {
+				puts("ERROR: Basedir path length exceeds MAX_PATH_LEN (" STR(MAX_PATH_LEN) ")");
+				exit(1);
 			}
 			base_path[x] = 0;
 			while (--x >= 0 && (base_path[x] == ' ' || base_path[x] == '\t' ||
 				base_path[x] == '\r' || base_path[x] == '\n')) {
 				base_path[x] = 0;
 			}
-			x++;
-			while (--x >= 0 && (base_path[x] == '/' || base_path[x] == '\\')) {
-				base_path[x] = 0;
-			}
 		}
 		// Auth
-		if (strcmp(argv[i], "-a") == 0) {
+		if (!strcmp(argv[i], "-a") || !strcmp(argv[i], "--auth")) {
 			if (++i >= argc) {
 				help = 1;
 				break;
 			}
-			strcpy(auth_str, argv[i]);
+			int x;
+			for (x = 0; argv[i][x] && x < 127; x++) {
+				auth_str[x] = argv[i][x];
+			}
+			if (x == 127) {
+				puts("ERROR: Authorization string length exceeds maximum of 127 characters");
+				exit(1);
+			}
+			auth_str[x] = 0;
 		}
 		// Dir list
-		if (strcmp(argv[i], "-l") == 0) {
+		if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
 			dirlist = 1;
 		}
 		// Help
-		if (strcmp(argv[i], "-h") == 0) {
+		if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
 			help = 1;
 			break;
 		}
 #ifdef HAVE_SETUID
 		// User drop
-		if (strcmp(argv[i], "-u") == 0) {
+		if (!strcmp(argv[i], "-u") || !strcmp(argv[i], "--user")) {
 			if (++i >= argc) {
 				help = 1;
 				break;
 			}
-			strcpy(sw_user, argv[i]);
+			strncpy(sw_user, argv[i], 254);
+			sw_user[255] = 0;
 		}
 #endif
 	}
 	if (help) {
-		printf("Usage: server [-p port] ...\n"
+		puts("Usage: server [-p port] ...\n"
 			"    -p PORT       Port                     (8080)\n"
 			"    -t SECONDS    Timeout                  (8 seconds)\n"
 			"    -d DIR        Base Dir                 (working dir)\n"
@@ -507,9 +487,15 @@ int main(int argc, char** argv) {
 			"    -u USER       Switch to user           (nobody)\n"
 #endif
 			"    -a STRING     HTTP Auth string, i.e.   (none)\n"
-			"                   \"Basic dXNlcjpwYXNz\"\n"
+			"                   \"Basic dXNlcjpwYXNz\""
 		);
 		exit(0);
+	}
+
+	// Trim basedir trailing slashes
+	i = strlen(base_path);
+	while (--i >= 0 && (base_path[i] == '/' || base_path[i] == '\\')) {
+		base_path[i] = 0;
 	}
 
 #ifdef _WIN32
@@ -519,7 +505,6 @@ int main(int argc, char** argv) {
 
 	// Bind port!
 	struct sockaddr_in servaddr;
-
 	listenfd = socket(AF_INET, SOCK_STREAM, 0);
 	memset(&servaddr, 0, sizeof(servaddr));
 	servaddr.sin_family = AF_INET;
@@ -528,7 +513,8 @@ int main(int argc, char** argv) {
 	int yes = 1;
 	setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
 	if (bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
-		printf("Error %u binding the port.\n", errno); perror("bind");
+		printf("ERROR: Could not bind port:%u\n", port);
+		perror("bind");
 #ifdef _WIN32
 		WSACleanup();
 #endif
@@ -539,12 +525,21 @@ int main(int argc, char** argv) {
 	// Switch to user, unless empty or '-'
 	if (sw_user[0] && (sw_user[0] != '-' || sw_user[1])) {
 		struct passwd* pw = getpwnam(sw_user);
-		if (pw == 0) {
-			fprintf(stderr, "Could not find user %s\n", sw_user);
+		if (!pw) {
+			printf("ERROR: Could not find user:%s\n", sw_user);
 			exit(1);
 		}
-		setgid(pw->pw_gid);
-		setuid(pw->pw_uid);
+		if (setgid(pw->pw_gid)) {
+			printf("ERROR: Could not set gid:%d for user:%s\n", pw->pw_gid, sw_user);
+			perror("setgid");
+			exit(1);
+		}
+		if (setuid(pw->pw_uid)) {
+			printf("ERROR: Could not set uid:%d for user:%s\n", pw->pw_uid, sw_user);
+			perror("setuid");
+			exit(1);
+		}
+		printf("Switched to user:%s uid:%d gid:%d\n", sw_user, pw->pw_uid, pw->pw_gid);
 	}
 #endif
 

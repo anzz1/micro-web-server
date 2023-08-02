@@ -1,7 +1,9 @@
+// server.h
 
 #define _FILE_OFFSET_BITS 64
 
 #ifdef _WIN32
+
 //#define WINVER 0x600
 //#define _WIN32_WINNT 0x600
 #define _CRT_NONSTDC_NO_WARNINGS
@@ -11,15 +13,36 @@
 #include <winsock2.h>
 #include <direct.h>
 #include "w32_dirent.h"
-#pragma comment (lib, "ws2_32.lib")
+#pragma comment(lib, "ws2_32.lib")
+#ifdef _MSC_VER
+#pragma warning(disable:4133)
+#endif
+
+#define poll				WSAPoll
+#define ioctl				ioctlsocket
+#define ftello				_ftelli64
+#define fseeko				_fseeki64
+#define POLLIN				(POLLRDNORM | POLLRDBAND)
+#define POLLOUT				(POLLWRNORM)
+
 #else
+
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <poll.h>
 #include <pwd.h>
 #include <unistd.h>
+#ifndef O_NONBLOCK
+#include <sys/ioctl.h>
+#endif
+
+#define closesocket			close
+#define send(a,b,c,d)		write(a,b,c)
+#define recv(a,b,c,d)		read(a,b,c)
+
 #endif
 
 #include <assert.h>
@@ -36,24 +59,95 @@
 #include "server_config.h"
 
 #ifndef LLONG_MAX
-	#define LLONG_MAX 2094967295
+	#define LLONG_MAX 9223372036854775807LL
 #endif
 
-#define RTYPE_404    0
-#define RTYPE_DIR    1
-#define RTYPE_FIL    2
-#define RTYPE_405    3
-#define RTYPE_403    4
-#define RTYPE_400    5
+#define RTYPE_404	0
+#define RTYPE_DIR	1
+#define RTYPE_FIL	2
+#define RTYPE_405	3
+#define RTYPE_403	4
+#define RTYPE_400	5
 
-void urldecode (char * dest, const char *url);
-char* stristr2(const char* s1, const char* s2);
+#define STATUS_REQ	0
+#define STATUS_RESP	1
+
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
 
 #define RETURN_STRBUF(task, buffer) \
 	{ \
 		strcpy((char*)task->request_data, (char*)buffer); \
 		task->request_size = strlen((char*)buffer); \
 	}
+
+char hex2char(const char * i) {
+	char c1, c2;
+	if      (i[0] >= '0' && i[0] <= '9') c1 = i[0]-'0';
+	else if (i[0] >= 'a' && i[0] <= 'f') c1 = i[0]-'a'+10;
+	else                                 c1 = i[0]-'A'+10;
+
+	if      (i[1] >= '0' && i[1] <= '9') c2 = i[1]-'0';
+	else if (i[1] >= 'a' && i[1] <= 'f') c2 = i[1]-'a'+10;
+	else                                 c2 = i[1]-'A'+10;
+
+	return c1*16+c2;
+}
+
+int ishexpair(const char *i) {
+	if (!((i[0] >= '0' && i[0] <= '9') ||
+		(i[0] >= 'a' && i[0] <= 'f') ||
+		(i[0] >= 'A' && i[0] <= 'F') ))
+		return 0;
+	if (!((i[1] >= '0' && i[1] <= '9') ||
+		(i[1] >= 'a' && i[1] <= 'f') ||
+		(i[1] >= 'A' && i[1] <= 'F') ))
+		return 0;
+	return 1;
+}
+
+void urldecode(char *dest, const char *url) {
+	while (*url) {
+		if (*url == '%' && ishexpair(url+1)) {
+			*dest++ = hex2char(++url);
+			url++;
+		}
+		else if (*url == '+') {
+			*dest++ = ' ';
+		}
+		else {
+			*dest++ = *url;
+		}
+		url++;
+	}
+	*dest = 0;
+}
+
+// s2 should be in lowercase
+char* stristr2(const char* s1, const char* s2) {
+	unsigned int i;
+	char *p;
+	for (p = (char*)s1; *p != 0; p++) {
+		i = 0;
+		do {
+			if (s2[i] == 0) return p;
+			if (p[i] == 0) break;
+			if (s2[i] != ((p[i]>64 && p[i]<91)?(p[i]+32):p[i])) break;
+		} while (++i);
+	}
+	return 0;
+}
+
+// s2 should be in lowercase
+static int stricmp2(const char* s1, const char* s2) {
+	unsigned int i;
+	for (i = 0; s1[i]; i++) {
+		char c = (s1[i] > 64 && s1[i] < 91) ? s1[i]+32 : s1[i];
+		if (c > s2[i]) return 1;
+		else if (c < s2[i]) return -1;
+	}
+	return (s2[i] ? -1 : 0);
+}
 
 // writes to param_str the value of the parameter in the request trimming whitespaces
 static char param_str[REQUEST_MAX_SIZE*3];
@@ -79,17 +173,17 @@ int header_attr_lookup(const char * request, const char * param, const char * pa
 unsigned int generate_dir_entry(void* out, const struct dirent* ep) {
 	const char* slash = ep->d_type == DT_DIR ? "/" : "";
 #ifdef HTMLLIST
-	sprintf((char*)out, "<a href=\"%s%s\">%s%s</a><br>\n", ep->d_name, slash, ep->d_name, slash);
+	return sprintf((char*)out, "<a href=\"%s%s\">%s%s</a><br>\n", ep->d_name, slash, ep->d_name, slash);
 #else
-	sprintf((char*)out, "%s%s\n", ep->d_name, slash);
+	return sprintf((char*)out, "%s%s\n", ep->d_name, slash);
 #endif
-	return strlen((char*)out);
 }
 
 unsigned int dirlist_size(const char* file_path) {
 	char tmp[4 * 1024];
-	unsigned r = 0;
+	unsigned int r = 0;
 	DIR* d = opendir(file_path);
+	if (!d) return 0;
 	while (1) {
 		struct dirent* ep = readdir(d);
 		if (!ep) break;
@@ -132,11 +226,10 @@ int parse_range_req(const char* req_val, long long* start, long long* end) {
 
 	// Search for "-"
 	ptr = strchr(ptr, '-');
-	if (ptr == 0)
+	if (!ptr)
 		return 0;  // No "-" present, assuming EOF
-	else
-		ptr++;
 
+	ptr++;
 	// More whitespace
 	while (*ptr == ' ') ptr++;
 
@@ -192,13 +285,13 @@ int path_create(const char* base_path, const char* req_file, char* out_file) {
 	//puts(out_file);
 
 	// Check whether we have a directory or a file
-	struct stat path_stat;
-	stat(out_file, &path_stat);
-	if (S_ISDIR(path_stat.st_mode)) {
+	void* dirp = opendir(out_file);
+	if (dirp) {
+		closedir(dirp);
 		if (*(p-1) != '/') *p++ = '/';
-		strcpy(p, DEFAULT_DOC);
 
 		// Try the index first
+		strcpy(p, DEFAULT_DOC);
 		FILE * fd = fopen(out_file, "rb");
 		if (fd) {
 			fclose(fd);
@@ -206,12 +299,7 @@ int path_create(const char* base_path, const char* req_file, char* out_file) {
 		}
 		*p = 0;
 
-		// Try to open the dir
-		void* ptr = opendir(out_file);
-		if (ptr) {
-			closedir(ptr);
-			return RTYPE_DIR;
-		}
+		return RTYPE_DIR;
 	} else {
 		// Try as file
 		FILE* fd = fopen(out_file, "rb");
@@ -224,78 +312,23 @@ int path_create(const char* base_path, const char* req_file, char* out_file) {
 	return RTYPE_404;
 }
 
-char hex2char(const char * i) {
-	char c1, c2;
-	if      (i[0] >= '0' && i[0] <= '9') c1 = i[0]-'0';
-	else if (i[0] >= 'a' && i[0] <= 'f') c1 = i[0]-'a'+10;
-	else                                 c1 = i[0]-'A'+10;
-
-	if      (i[1] >= '0' && i[1] <= '9') c2 = i[1]-'0';
-	else if (i[1] >= 'a' && i[1] <= 'f') c2 = i[1]-'a'+10;
-	else                                 c2 = i[1]-'A'+10;
-
-	return c1*16+c2;
-}
-int ishexpair(const char * i) {
-	if (!(	(i[0] >= '0' && i[0] <= '9') ||
-		(i[0] >= 'a' && i[0] <= 'f') ||
-		(i[0] >= 'A' && i[0] <= 'F') ))
-		return 0;
-	if (!(	(i[1] >= '0' && i[1] <= '9') ||
-		(i[1] >= 'a' && i[1] <= 'f') ||
-		(i[1] >= 'A' && i[1] <= 'F') ))
-		return 0;
-	return 1;
-}
-
-void urldecode (char * dest, const char *url) {
-	int s = 0, d = 0;
-	int url_len = strlen (url) + 1;
-
-	while (s < url_len) {
-		char c = url[s++];
-
-		if (c == '%' && s + 2 < url_len) {
-			if (ishexpair(&url[s]))
-				dest[d++] = hex2char(&url[s]);
-			else {
-				dest[d++] = c;
-				dest[d++] = url[s+0];
-				dest[d++] = url[s+1];
+const char* mime_lookup(char* file) {
+	char* ext = file+strlen(file);
+	while (ext != file && *ext != '.') ext--;
+	if (*ext++ == '.' && *ext) {
+		for (unsigned int i = 1; i < sizeof(mtypes) / sizeof(struct mime_type); i++) {
+			if (!stricmp2(ext, mtypes[i].extension)) {
+				return mtypes[i].mime_type;
 			}
-			s += 2;
-		}
-		else if (c == '+') {
-			dest[d++] = ' ';
-		}
-		else {
-			dest[d++] = c;
 		}
 	}
+	return mtypes[0].mime_type; // No extension or not found, defaulting
 }
 
-// s2 should be in lowercase
-char* stristr2(const char* s1, const char* s2) {
-	unsigned int i;
-	char *p;
-	for (p = (char*)s1; *p != 0; p++) {
-		i = 0;
-		do {
-			if (s2[i] == 0) return p;
-			if (p[i] == 0) break;
-			if (s2[i] != ((p[i]>64 && p[i]<91)?(p[i]+32):p[i])) break;
-		} while (++i);
-	}
-	return 0;
-}
-
-// s2 should be in lowercase
-static int stricmp2(const char* s1, const char* s2) {
-  unsigned int i;
-  for (i = 0; s1[i]; i++) {
-	char c = (s1[i] > 64 && s1[i] < 91) ? s1[i]+32 : s1[i];
-    if (c > s2[i]) return 1;
-    else if (c < s2[i]) return -1;
-  }
-  return (s2[i] ? -1 : 0);
+long long lof(FILE* fd) {
+	long long pos = ftello(fd);
+	fseeko(fd,0,SEEK_END);
+	long long len = ftello(fd);
+	fseeko(fd,pos,SEEK_SET);
+	return len;
 }

@@ -1,17 +1,14 @@
 
-#define DEFAULT_DOC	       "index.html"  // Default doc to serve when URL points to dir
-#define REQUEST_MAX_SIZE   2047          // Maximum allowed size for a GET request
-#define MAX_PATH_LEN	   4096          // Maximum size (in chars) for a path in the filesystem
+#define DEFAULT_DOC			"index.html"	// Default doc to serve when URL points to dir
+#define REQUEST_MAX_SIZE	2047			// Maximum allowed size for a GET request
+#define MAX_PATH_LEN		4095			// Maximum size (in chars) for a path in the filesystem
 
-#define MAXCLIENTS         128             // Maximum number of simultaneous connections allowed (the bigger, the more mem used)
-#define WR_BLOCK_SIZE	   (1024*1024)     // Chunk size for disk read/write operations, the bigger the more throughput
+#define MAXCLIENTS			128				// Maximum number of simultaneous connections allowed (the bigger, the more mem used)
+#define WR_BLOCK_SIZE		(1024*1024)		// Chunk size for disk read/write operations, the bigger the more throughput
 
-#define HTMLLIST                         // Directory listing is an HTML doc (as opposted to TXT)
+#define HTMLLIST							// Directory listing as HTML (undefine for TXT)
 
-#if !defined(HAVE_SETUID) && !defined(_WIN32)
-#define HAVE_SETUID
-#endif
-#if defined(HAVE_SETUID) && defined(NO_SETUID)
+#ifdef _WIN32
 #undef HAVE_SETUID
 #endif
 
@@ -22,19 +19,114 @@ struct mime_type {
 	const char *mime_type;
 } mtypes[] = {
 	{"",		"application/octet-stream"},  // Default mime type
+	{"7z",		"application/x-7z-compressed"},
+	{"aac",		"audio/aac"},
+	{"asm",		"text/plain"},
 	{"avi",		"video/x-msvideo"},
 	{"bmp",		"image/bmp"},
+	{"bz",		"application/x-bzip"},
+	{"bz2",		"application/x-bzip2"},
+	{"c",		"text/plain"},
+	{"cc",		"text/plain"},
+	{"cpp",		"text/plain"},
 	{"css",		"text/css"},
+	{"csv",		"text/csv"},
+	{"doc",		"application/msword"},
+	{"docx",	"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+	{"dot",		"application/msword"},
+	{"eot",		"application/vnd.ms-fontobject"},
+	{"flac",	"audio/flac"},
+	{"flv",		"video/x-flv"},
 	{"gif",		"image/gif"},
+	{"gz",		"application/gzip"},
+	{"gzip",	"application/gzip"},
+	{"h",		"text/plain"},
+	{"hh",		"text/plain"},
+	{"hpp",		"text/plain"},
 	{"htm",		"text/html"},
 	{"html",	"text/html"},
+	{"ico",		"image/vnd.microsoft.icon"},
+	{"ics",		"text/calendar"},
+	{"jar",		"application/java-archive"},
+	{"java",	"text/plain"},
 	{"jpeg",	"image/jpeg"},
 	{"jpg",		"image/jpeg"},
 	{"js",		"text/javascript"},
 	{"json",	"application/json"},
+	{"key",		"application/pgp-keys"},
+	{"log",		"text/plain"},
+	{"lz",		"application/x-lzip"},
+	{"lzma",	"application/x-lzma"},
+	{"lzo",		"application/x-lzop"},
+	{"m3u",		"application/x-mpegurl"},
+	{"m3u8",	"application/x-mpegurl"},
+	{"m4a",		"audio/aac"},
+	{"m4u",		"application/vnd.mpegurl"},
+	{"mid",		"audio/midi"},
+	{"midi",	"audio/midi"},
+	{"mkv",		"video/x-matroska"},
+	{"mov",		"video/quicktime"},
+	{"mp2",		"audio/mpeg"},
 	{"mp3",		"audio/mpeg"},
 	{"mp4",		"video/mp4"},
+	{"mpeg",	"video/mpeg"},
+	{"mpg",		"video/mpeg"},
+	{"mpv",		"video/x-matroska"},
+	{"odt",		"application/vnd.oasis.opendocument.text"},
+	{"ods",		"application/vnd.oasis.opendocument.spreadsheet"},
+	{"odp",		"application/vnd.oasis.opendocument.presentation"},
+	{"odg",		"application/vnd.oasis.opendocument.graphics"},
+	{"odc",		"application/vnd.oasis.opendocument.chart"},
+	{"odf",		"application/vnd.oasis.opendocument.formula"},
+	{"odi",		"application/vnd.oasis.opendocument.image"},
+	{"odm",		"application/vnd.oasis.opendocument.text-master"},
+	{"odb",		"application/vnd.oasis.opendocument.database"},
+	{"oga",		"audio/ogg"},
+	{"ogg",		"audio/ogg"},
+	{"ogv",		"video/ogg"},
+	{"opus",	"audio/ogg"},
+	{"otf",		"font/otf"},
+	{"ott",		"application/vnd.oasis.opendocument.text-template"},
+	{"pcx",		"image/x-pcx"},
+	{"pdf",		"application/pdf"},
+	{"pgp",		"application/pgp-encrypted"},
 	{"png",		"image/png"},
+	{"ppt",		"application/vnd.ms-powerpoint"},
+	{"pptx",	"application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	{"py",		"text/x-python"},
+	{"pyc",		"application/x-python-code"},
+	{"qt",		"video/quicktime"},
+	{"rar",		"application/vnd.rar"},
+	{"rtf",		"application/rtf"},
+	{"sig",		"application/pgp-signature"},
+	{"spx",		"audio/ogg"},
+	{"svg",		"image/svg+xml"},
+	{"swf",		"application/x-shockwave-flash"},
+	{"tar",		"application/x-tar"},
+	{"tgz",		"application/gzip"},
+	{"tif",		"image/tiff"},
+	{"tiff",	"image/tiff"},
+	{"ts",		"video/mp2t"},
+	{"ttf",		"font/ttf"},
 	{"txt",		"text/plain"},
-	{"xml",		"text/xml"}
+	{"wasm",	"application/wasm"},
+	{"wav",		"audio/wav"},
+	{"weba",	"audio/webm"},
+	{"webm",	"video/webm"},
+	{"webp",	"image/webp"},
+	{"wma",		"audio/x-ms-wma"},
+	{"wmv",		"video/x-ms-wmv"},
+	{"woff",	"font/woff"},
+	{"woff2",	"font/woff2"},
+	{"xhtml",	"application/xhtml+xml"},
+	{"xls",		"application/vnd.ms-excel"},
+	{"xlsb",	"application/vnd.ms-excel.sheet.binary.macroenabled.12"},
+	{"xlsm",	"application/vnd.ms-excel.sheet.macroenabled.12"},
+	{"xlsx",	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+	{"xml",		"text/xml"},
+	{"xspf",	"application/xspf+xml"},
+	{"xz",		"application/x-xz"},
+	{"z",		"application/x-compress"},
+	{"zip",		"application/zip"},
+	{"zst",		"application/zstd"}
 };
