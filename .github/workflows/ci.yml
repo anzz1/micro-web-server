@@ -1,4 +1,4 @@
-name: release
+name: ci
 
 on:
   workflow_dispatch: # allows manual triggering
@@ -32,7 +32,8 @@ jobs:
       uses: eariassoto/setup-premake@v1
       with:
         version: '5.0.0-beta2'
-        action: 'vs2022'  
+        action: 'vs2022'
+        options: '--file=./win32/premake5.lua'
 
     - name: Add MSBuild to PATH
       id: setup_msbuild
