@@ -106,23 +106,6 @@ int ishexpair(const char *i) {
 	return 1;
 }
 
-void urldecode(char *dest, const char *url) {
-	while (*url) {
-		if (*url == '%' && ishexpair(url+1)) {
-			*dest++ = hex2char(++url);
-			url++;
-		}
-		else if (*url == '+') {
-			*dest++ = ' ';
-		}
-		else {
-			*dest++ = *url;
-		}
-		url++;
-	}
-	*dest = 0;
-}
-
 // s2 should be in lowercase
 char* stristr2(const char* s1, const char* s2) {
 	unsigned int i;
@@ -150,7 +133,7 @@ static int stricmp2(const char* s1, const char* s2) {
 }
 
 // writes to param_str the value of the parameter in the request trimming whitespaces
-static char param_str[REQUEST_MAX_SIZE*3];
+static char param_str[REQUEST_MAX_SIZE + 1];
 int header_attr_lookup(const char * request, const char * param, const char * param_end) {
 	char * ptr = stristr2(request,param);  // ptr to the parameter line
 	if (ptr == 0)
@@ -245,44 +228,60 @@ int parse_range_req(const char* req_val, long long* start, long long* end) {
 	return 0;
 }
 
-int path_create(const char* base_path, const char* req_file, char* out_file) {
-	int i, j;
-	char* temp = malloc(strlen(req_file) + 1);
-
-	urldecode(temp, req_file);
-
-	for (i = 0, j = 0; temp[i]; i++, j++) {
-		while ((temp[i] == '/' || temp[i] == '\\') && (temp[i + 1] == '/' || temp[i + 1] == '\\')) i++;
-		if  (temp[i] < 0x20 || (temp[i] == '.' && temp[i + 1] == '.' && (temp[i + 2] == '/' || temp[i + 2] == '\\'))) {
-			free(temp);
-			return RTYPE_400;
+void urldecode(char *url) {
+	while (*url && *url != '%') url++;
+	char *p = url;
+	while (*url) {
+		if (*url == '%' && ishexpair(url+1)) {
+			*p++ = hex2char(++url);
+			url++;
 		}
-		if (temp[i] == '\\') {
-			temp[i] = '/';
-		} else if (temp[i] == '?') {
-			temp[j] = 0;
-			break;
+		else {
+			*p++ = *url;
 		}
-		if (j != i) temp[j] = temp[i];
-	}
-	if (j > 0 && temp[j - 1] == '.') {
-		free(temp);
-		return RTYPE_400;
-	}
-	temp[j] = 0;
-
-	char* p = out_file;
-	for (i = 0; base_path[i]; i++) {
-		*p++ = base_path[i];
-	}
-	if (temp[0] != '/') *p++ = '/';
-	for (i = 0; temp[i]; i++) {
-		*p++ = temp[i];
+		url++;
 	}
 	*p = 0;
-	free(temp);
+}
 
-	//puts(out_file);
+#define MAX_REQ_PATH_LEN (MAX_PATH_LEN - sizeof(DEFAULT_DOC))
+int path_create(const char* base_path, char* req_file, char* out_file) {
+	int i, j;
+
+	urldecode(req_file);
+	for (i = 0, j = 0; req_file[i]; i++, j++) {
+		while ((req_file[i] == '/' || req_file[i] == '\\') && (req_file[i + 1] == '/' || req_file[i + 1] == '\\')) i++;
+		if  (req_file[i] < 0x20 || (req_file[i] == '.' && req_file[i + 1] == '.' && (req_file[i + 2] == '/' || req_file[i + 2] == '\\'))) {
+			return RTYPE_400;
+		}
+		if (req_file[i] == '\\') {
+			req_file[i] = '/';
+		} else if (req_file[i] == '?') {
+			req_file[j] = 0;
+			break;
+		}
+		if (j != i) req_file[j] = req_file[i];
+	}
+	if (j > 0 && req_file[j - 1] == '.') {
+		return RTYPE_400;
+	}
+	req_file[j] = 0;
+
+	char* p = out_file;
+	for (i = 0, j = 0; base_path[i]; i++, j++) {
+		*p++ = base_path[i];
+	}
+	if (req_file[0] != '/') {
+		*p++ = '/';
+		j++;
+	}
+	for (i = 0; req_file[i] && j < MAX_REQ_PATH_LEN; i++, j++) {
+		*p++ = req_file[i];
+	}
+	if (j == MAX_REQ_PATH_LEN) {
+		return RTYPE_400;
+	}
+	*p = 0;
 
 	// Check whether we have a directory or a file
 	void* dirp = opendir(out_file);

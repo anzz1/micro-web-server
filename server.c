@@ -69,6 +69,7 @@ void process_exit(int signal) {
 	for (i = 0; i < MAXCLIENTS; i++) {
 		if (tasks[i].fd != -1) closesocket(tasks[i].fd);
 		if (tasks[i].fdfile != 0) fclose(tasks[i].fdfile);
+		if (tasks[i].dirlist != 0) closedir(tasks[i].dirlist);
 	}
 
 #ifdef _WIN32
@@ -225,7 +226,7 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 						} else {
 							int ishead = 0;
 							int code = RTYPE_405;
-							char file_path[MAX_PATH_LEN * 2];
+							char file_path[MAX_PATH_LEN + 1];
 							int isget = (header_attr_lookup((char*)t->request_data, "get ", " ") >= 0); // Get the file
 							if (!isget) ishead = (header_attr_lookup((char*)t->request_data, "head ", " ") >= 0); // Get the file
 
@@ -324,6 +325,7 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 							t->offset = 0;
 						} else {
 							closedir(t->dirlist);
+							t->dirlist = 0;
 							force_end = 1;
 						}
 					} else {
@@ -367,6 +369,10 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 					fclose(t->fdfile);
 					t->fdfile = 0;
 				}
+				if (t->dirlist) {
+					closedir(t->dirlist);
+					t->dirlist = 0;
+				}
 				t->fd = -1;
 				num_active_clients--;
 
@@ -392,7 +398,7 @@ int main(int argc, char** argv) {
 	unsigned int port = 8080;
 	int timeout = 8;
 	int dirlist = 0;
-	char base_path[MAX_PATH_LEN + 1] = {0};
+	char base_path[MAX_PATH_LEN + 1];
 #ifdef HAVE_SETUID
 	char sw_user[256] = "nobody";
 #endif
