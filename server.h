@@ -1,5 +1,7 @@
 // server.h
 
+#include "server_config.h"
+
 #define _FILE_OFFSET_BITS 64
 
 #ifdef _WIN32
@@ -9,10 +11,15 @@
 #define _CRT_NONSTDC_NO_WARNINGS
 #define _CRT_SECURE_NO_WARNINGS
 #define WIN32_LEAN_AND_MEAN
+#ifdef USE_MSVCRT
+#define _NO_CRT_STDIO_INLINE
+#pragma comment(lib, "msvcrt.lib")
+#endif
 #include <windows.h>
 #include <winsock2.h>
 #include <direct.h>
-#include "w32_dirent.h"
+#include <io.h>
+#include "win32/inc/w32_dirent.h"
 #pragma comment(lib, "ws2_32.lib")
 #ifdef _MSC_VER
 #pragma warning(disable:4133)
@@ -20,8 +27,9 @@
 
 #define poll				WSAPoll
 #define ioctl				ioctlsocket
-#define ftello				_ftelli64
+#define ftello(a)			_telli64(_fileno(a))
 #define fseeko				_fseeki64
+#define getcwd				_getcwd
 #define POLLIN				(POLLRDNORM | POLLRDBAND)
 #define POLLOUT				(POLLWRNORM)
 
@@ -55,8 +63,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
-
-#include "server_config.h"
 
 #ifndef LLONG_MAX
 	#define LLONG_MAX 9223372036854775807LL

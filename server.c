@@ -550,4 +550,9 @@ int main(int argc, char** argv) {
 #endif
 
 	server_run(port, timeout, base_path, dirlist);
+	return 0;
 }
+
+#ifdef USE_MSVCRT
+#include "win32/inc/w32_crt_stub.h"
+#endif

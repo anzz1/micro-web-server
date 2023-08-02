@@ -10,6 +10,7 @@
 
 #ifdef _WIN32
 #undef HAVE_SETUID
+#define USE_MSVCRT							// Use msvcrt instead of ucrt
 #endif
 
 // MIME type definition

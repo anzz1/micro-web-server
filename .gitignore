@@ -17,4 +17,5 @@
 *.app
 
 server
-regression
+
+!/**/msvcrt.lib
