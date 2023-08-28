@@ -3,6 +3,7 @@
 #include "server.h"
 
 const char ok_200[]  = "HTTP/1.1 200 OK\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
+const char found_302[] = "HTTP/1.1 302 Found\r\nLocation: %s%s%s/\r\nConnection: close\r\n\r\n";
 const char err_400[] = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 const char err_401[] = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\nConnection: close\r\n\r\n";
 const char err_403[] = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n";
@@ -20,6 +21,10 @@ const char dirlist_200[]  = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nCont
 char tbuffer[WR_BLOCK_SIZE];
 
 char auth_str[128]; // "Basic dXNlcjpwYXNz";
+
+char param_str[REQUEST_MAX_SIZE + 1];
+char request_uri[REQUEST_MAX_SIZE + 1];
+char file_path[MAX_PATH_LEN + 1];
 
 struct process_task {
 	int fd;
@@ -202,7 +207,7 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 
 						int userange = 1;
 						long long fstart = 0;
-						if (header_attr_lookup((char*)t->request_data, "range:", "\r\n") < 0) {
+						if (header_attr_lookup(param_str, (char*)t->request_data, "range:", "\r\n") <= 0) {
 							userange = 0;
 							t->fend = LLONG_MAX;
 						} else {
@@ -216,7 +221,7 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 						// Auth
 						int auth_ok = 1;
 						if (auth_str[0] != 0) {
-							if (header_attr_lookup((char*)t->request_data, "authorization:", "\r\n") < 0 || strcmp(param_str, auth_str)) {
+							if (header_attr_lookup(param_str, (char*)t->request_data, "authorization:", "\r\n") <= 0 || strcmp(param_str, auth_str)) {
 								auth_ok = 0;
 							}
 						}
@@ -224,15 +229,23 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 						if (!auth_ok) {
 							RETURN_STRBUF(t, err_401);
 						} else {
-							int ishead = 0;
 							int code = RTYPE_405;
-							char file_path[MAX_PATH_LEN + 1];
-							int isget = (header_attr_lookup((char*)t->request_data, "get ", " ") >= 0); // Get the file
-							if (!isget) ishead = (header_attr_lookup((char*)t->request_data, "head ", " ") >= 0); // Get the file
-
-							if (isget || ishead) {
-								code = path_create(base_path, param_str, file_path);
-								if (code == RTYPE_DIR && !dirlist) code = RTYPE_403;
+							int isget = 0;
+							int uri_len = header_attr_lookup(request_uri, (char*)t->request_data, "get ", " ");
+							if (uri_len > 0) {
+								isget = 1;
+							} else {
+								uri_len = header_attr_lookup(request_uri, (char*)t->request_data, "head ", " ");
+							}
+							if (uri_len > 0) {
+								code = path_create(base_path, request_uri, file_path);
+								if (code == RTYPE_DIR) {
+									if (!dirlist) {
+										code = RTYPE_403;
+									} else if (request_uri[uri_len-1] != '/') {
+										code = RTYPE_302;
+									}
+								}
 							}
 
 							switch (code) {
@@ -248,8 +261,17 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 								case RTYPE_405:
 									RETURN_STRBUF(t, err_405);
 									break;
+								case RTYPE_302:
+									int host_len = header_attr_lookup(param_str, (char*)t->request_data, "host:", "\r\n");
+									if (host_len > 0 && host_len < (REQUEST_MAX_SIZE-sizeof(found_302)-4)) {
+										sprintf((char*)t->request_data, found_302, "http://", param_str, request_uri); // absolute url
+									} else {
+										sprintf((char*)t->request_data, found_302, "", "", request_uri); // relative url
+									}
+									t->request_size = strlen((char*)t->request_data);
+									break;
 								case RTYPE_DIR:  // Dir
-									if (!ishead)
+									if (isget)
 										t->dirlist = opendir(file_path);
 									sprintf((char*)t->request_data, dirlist_200, dirlist_size(file_path));
 									t->request_size = strlen((char*)t->request_data);
@@ -273,11 +295,11 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 											t->request_size = strlen((char*)t->request_data);
 										}
 
-										if (ishead) {
-											fclose(fd);
-										} else {
+										if (isget) {
 											t->fdfile = fd;
 											fseeko(fd, fstart, SEEK_SET); // Seek the first byte
+										} else { // head
+											fclose(fd);
 										}
 									}
 									break;

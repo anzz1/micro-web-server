@@ -74,6 +74,7 @@
 #define RTYPE_405	3
 #define RTYPE_403	4
 #define RTYPE_400	5
+#define RTYPE_302	6
 
 #define STATUS_REQ	0
 #define STATUS_RESP	1
@@ -139,8 +140,7 @@ static int stricmp2(const char* s1, const char* s2) {
 }
 
 // writes to param_str the value of the parameter in the request trimming whitespaces
-static char param_str[REQUEST_MAX_SIZE + 1];
-int header_attr_lookup(const char * request, const char * param, const char * param_end) {
+int header_attr_lookup(char * param_str, const char * request, const char * param, const char * param_end) {
 	char * ptr = stristr2(request,param);  // ptr to the parameter line
 	if (ptr == 0)
 		return -1;
