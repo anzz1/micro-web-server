@@ -2,7 +2,7 @@
 
 #include "server.h"
 
-const char ok_200[]  = "HTTP/1.1 200 OK\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
+const char ok_200[]  = "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 const char found_302[] = "HTTP/1.1 302 Found\r\nLocation: %s%s%s/\r\nConnection: close\r\n\r\n";
 const char err_400[] = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 const char err_401[] = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\nConnection: close\r\n\r\n";
@@ -284,7 +284,13 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 									} else {
 										long long len = lof(fd);
 										const char* mimetype = mime_lookup(file_path);
-										if (t->fend > len - 1) t->fend = len - 1;  // Last byte, not size
+										if (t->fend < 0) {
+											fstart = len + t->fend; // +-
+											if (fstart < 0) fstart = 0;
+											t->fend = len - 1; // Last byte, not size
+										} else if (t->fend > len - 1) {
+											t->fend = len - 1; // Last byte, not size
+										}
 										long long content_length = t->fend - fstart + 1;
 
 										if (userange && isget) {
@@ -318,18 +324,19 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 				if (t->offset == t->request_size) { // Try to feed more data into the buffers
 					// Fetch some data from the file
 					if (t->fdfile) {
-						int toread = WR_BLOCK_SIZE;
-						if (toread > (t->fend + 1 - ftello(t->fdfile))) toread = (t->fend + 1 - ftello(t->fdfile));
-						if (toread < 0) toread = 0; // File could change its size...
+						size_t toread = WR_BLOCK_SIZE;
+						long long bytesleft = (t->fend + 1 - ftello(t->fdfile));
+						if (bytesleft < 0) toread = 0;
+						else if ((long long)toread > bytesleft) toread = (size_t)bytesleft;
 
-						int numb = fread(tbuffer,1,toread,t->fdfile);
-						if (numb > 0 && toread > 0) {
+						size_t nread = (toread > 0) ? fread(tbuffer,1,toread,t->fdfile) : 0;
+						if (nread > 0) {
 							// Try to write the data to the socket
-							int bwritten = send(t->fd,tbuffer,numb,0);
+							int bwritten = send(t->fd,tbuffer,(int)nread,0);
 
 							// Seek back if necessary
-							int bw = bwritten >= 0 ? bwritten : 0;
-							fseek(t->fdfile,-numb+bw,SEEK_CUR);
+							long long bseek = (long long)(bwritten >= 0 ? bwritten : 0)-(long long)nread;
+							if (bseek) fseeko(t->fdfile,bseek,SEEK_CUR);
 
 							if (bwritten >= 0) {
 								time(&t->start_time);   // Update timeout

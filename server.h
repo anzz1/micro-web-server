@@ -139,8 +139,23 @@ static int stricmp2(const char* s1, const char* s2) {
 	return (s2[i] ? -1 : 0);
 }
 
+// s2 should be in lowercase
+static int strncmpi2(const char* s1, const char* s2, unsigned int len) {
+  while (*s1 == ((*s1 > 64 && *s1 < 91) ? (*s2)-32 : *s2)) {
+    if (*s1 == 0 || --len == 0) return 0;
+    s1++; s2++;
+  }
+  return (*s1 > *s2) ? 1 : -1;
+}
+
 // writes to param_str the value of the parameter in the request trimming whitespaces
 int header_attr_lookup(char * param_str, const char * request, const char * param, const char * param_end) {
+	char tmp[32] = "\r\n";
+	if (strncmpi2(request, param, strlen(param))) {
+		strcpy(tmp+2, param);
+		param = tmp;
+	}
+
 	char * ptr = stristr2(request,param);  // ptr to the parameter line
 	if (ptr == 0)
 		return -1;
@@ -209,27 +224,29 @@ int parse_range_req(const char* req_val, long long* start, long long* end) {
 
 	if (*ptr == 0) return -1; // Empty!!!
 
-	// Read the start
-	sscanf(ptr, "%lld %*s", start);
-	if (*start < 0) return -1;
+	if (*ptr != '-') {
+		// Read the start
+		sscanf(ptr, "%lld", start);
+		if (*start < 0) return -1;
 
-	// Search for "-"
-	ptr = strchr(ptr, '-');
-	if (!ptr)
-		return 0;  // No "-" present, assuming EOF
+		// Search for "-"
+		ptr = strchr(ptr, '-');
+		if (!ptr)
+			return 0;  // No "-" present, assuming EOF
 
-	ptr++;
-	// More whitespace
-	while (*ptr == ' ') ptr++;
+		ptr++;
+		// More whitespace
+		while (*ptr == ' ') ptr++;
 
-	if (*ptr == 0)
-		return 0;  // assuming EOF
+		if (*ptr == 0 || *ptr == '-')
+			return 0;  // assuming EOF
+	}
 
 	// Read the end
-	sscanf(ptr, "%lld %*s", end);
+	sscanf(ptr, "%lld", end);
 
-	// Both should be positive values, being start >= end
-	if (*end < 0 || *start > *end) return -1;
+	// If end is not negative, should end >= start
+	if (*end >= 0 && *start > *end) return -1;
 
 	return 0;
 }
