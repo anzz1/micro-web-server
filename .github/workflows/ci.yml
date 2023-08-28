@@ -7,6 +7,10 @@ on:
         description: 'Create new release'
         required: true
         type: boolean
+      scrub_old_releases:
+        description: 'Scrub old releases'
+        required: true
+        type: boolean
   push:
     paths: ['.github/workflows/**', '**/CMakeLists.txt', '**/Makefile', '**/premake5.lua', '**/*.h', '**/*.c']
   pull_request:
@@ -72,3 +76,12 @@ jobs:
         asset_path: .\micro-web-server-windows.zip
         asset_name: micro-web-server-windows.zip
         asset_content_type: application/zip
+
+    - name: Scrub old releases
+      id: scrub_old_releases
+      if: ${{ github.event.inputs.scrub_old_releases == 'true' }}
+      uses: dev-drprasad/delete-older-releases@v0.2.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        keep_latest: 1
