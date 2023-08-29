@@ -331,8 +331,20 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 
 						size_t nread = (toread > 0) ? fread(tbuffer,1,toread,t->fdfile) : 0;
 						if (nread > 0) {
+
+							// Enable Nagle algorithm
+							int no = 0;
+							setsockopt(t->fd, IPPROTO_TCP, TCP_NODELAY, &no, sizeof(int));
+
 							// Try to write the data to the socket
 							int bwritten = send(t->fd,tbuffer,(int)nread,0);
+
+							// Disable Nagle algorithm
+							int yes = 1;
+							setsockopt(t->fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(int));
+
+							// Flush the queue
+							send(t->fd,tbuffer,0,0);
 
 							// Seek back if necessary
 							long long bseek = (long long)(bwritten >= 0 ? bwritten : 0)-(long long)nread;
