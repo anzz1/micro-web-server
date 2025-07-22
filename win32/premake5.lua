@@ -1,5 +1,5 @@
 workspace "micro-web-server"
-   configurations { "Release" }
+   configurations { "Release", "Debug" }
    platforms { "Win32", "x64" }
    location "build"
    objdir ("build/obj")
@@ -12,15 +12,20 @@ workspace "micro-web-server"
    intrinsics "On"
    rtti "Off"
    omitframepointer "On"
-   flags { "NoBufferSecurityCheck", "NoIncrementalLink", "NoManifest", "NoPCH", "NoRuntimeChecks", "OmitDefaultLibrary" }
+   flags { "NoBufferSecurityCheck", "NoManifest", "NoPCH", "NoRuntimeChecks", "OmitDefaultLibrary" }
    buildoptions { "/kernel /Gs1000000" }
-   linkoptions { "/SAFESEH:NO", "/EMITPOGOPHASEINFO", "/RELEASE", "/DEBUG:NONE" }
+
+   filter "configurations:Debug"
+      defines "DEBUG"
+      symbols "On"
 
    filter "configurations:Release"
       runtime "Release"
       defines "NDEBUG"
       optimize "Speed"
       symbols "Off"
+      flags { "NoIncrementalLink" }
+      linkoptions { "/SAFESEH:NO", "/EMITPOGOPHASEINFO", "/RELEASE", "/DEBUG:NONE" }
 
    filter "platforms:Win32"
       architecture "x86"
