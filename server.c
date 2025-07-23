@@ -262,6 +262,7 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 									RETURN_STRBUF(t, err_405);
 									break;
 								case RTYPE_302:
+								{	
 									int host_len = header_attr_lookup(param_str, (char*)t->request_data, "host:", "\r\n");
 									if (host_len > 0 && host_len < (REQUEST_MAX_SIZE-sizeof(found_302)-4)) {
 										sprintf((char*)t->request_data, found_302, "http://", param_str, request_uri); // absolute url
@@ -270,6 +271,7 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 									}
 									t->request_size = strlen((char*)t->request_data);
 									break;
+								}
 								case RTYPE_DIR:  // Dir
 									if (isget)
 										t->dirlist = opendir(file_path);
