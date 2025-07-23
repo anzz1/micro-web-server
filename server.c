@@ -3,24 +3,14 @@
 #include "server.h"
 
 const char ok_200[]  = "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
-const char found_302[] = "HTTP/1.1 302 Found\r\nLocation: %s%s%s/\r\nConnection: close\r\n\r\n";
 const char err_400[] = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n400 Bad Request\n";
-const char err_401[] = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\nConnection: close\r\n\r\n";
 const char err_403[] = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n403 Forbidden\n";
 const char err_404[] = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n404 Not Found\n";
 const char err_405[] = "HTTP/1.1 405 Method not allowed\r\nConnection: close\r\n\r\n";
 const char partial_206[]  = "HTTP/1.1 206 Partial content\r\nContent-Range: bytes %lld-%lld/%lld\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 
-#ifdef HTMLLIST
-const char dirlist_200[]  = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: %u\r\nX-Directory: true\r\nConnection: close\r\n\r\n";
-#else
-const char dirlist_200[]  = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %u\r\nX-Directory: true\r\nConnection: close\r\n\r\n";
-#endif
-
 // Temporary buffer for main thread usage
 char tbuffer[WR_BLOCK_SIZE];
-
-char auth_str[128]; // "Basic dXNlcjpwYXNz";
 
 char param_str[REQUEST_MAX_SIZE + 1];
 char request_uri[REQUEST_MAX_SIZE + 1];
@@ -35,7 +25,6 @@ struct process_task {
 	long long fend;
 	unsigned short request_size;
 	unsigned char request_data[REQUEST_MAX_SIZE+1];
-	DIR *dirlist;
 
 	// List of free/nonfree tasks
 	struct process_task * next;
@@ -74,7 +63,6 @@ void process_exit(int signal) {
 	for (i = 0; i < MAXCLIENTS; i++) {
 		if (tasks[i].fd != -1) closesocket(tasks[i].fd);
 		if (tasks[i].fdfile != 0) fclose(tasks[i].fdfile);
-		if (tasks[i].dirlist != 0) closedir(tasks[i].dirlist);
 	}
 
 #ifdef _WIN32
@@ -104,7 +92,7 @@ int sock_error() {
 }
 
 
-void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist) {
+void server_run (unsigned int port, int ctimeout, char * base_path) {
 	signal (SIGTERM, process_exit);
 	signal (SIGINT, process_exit);
 #ifndef _WIN32
@@ -114,6 +102,19 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 
 	int num_active_clients = 0;
 	int i,j,k;
+
+	sprintf(file_path, "%s/valve", base_path);
+	void* dirp = opendir(file_path);
+	if (!dirp) {
+		printf("ERROR: Could not find directory: '%s'\n", file_path);
+		perror("opendir");
+		puts("Please make sure your basedir '-d <path>' option is set correctly");
+#ifdef _WIN32
+		WSACleanup();
+#endif
+		exit(1);
+	}
+	closedir(dirp);
 
 	/* Force the network socket into nonblocking mode */
 	if (setNonblocking(listenfd) < 0) {
@@ -167,7 +168,6 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 				t->request_size = 0;
 				t->status = STATUS_REQ;
 				t->fdfile = 0;
-				t->dirlist = 0;
 				time(&t->start_time);
 
 				// Remove from free list, add to proc list
@@ -218,99 +218,66 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 							}
 						}
 
-						// Auth
-						int auth_ok = 1;
-						if (auth_str[0] != 0) {
-							if (header_attr_lookup(param_str, (char*)t->request_data, "authorization:", "\r\n") <= 0 || strcmp(param_str, auth_str)) {
-								auth_ok = 0;
-							}
+						int code = RTYPE_405;
+						int isget = 0;
+						int uri_len = header_attr_lookup(request_uri, (char*)t->request_data, "get ", " ");
+						if (uri_len > 0) {
+							isget = 1;
+						} else {
+							uri_len = header_attr_lookup(request_uri, (char*)t->request_data, "head ", " ");
+						}
+						if (uri_len > 0) {
+							code = path_create(base_path, request_uri, file_path);
 						}
 
-						if (!auth_ok) {
-							RETURN_STRBUF(t, err_401);
-						} else {
-							int code = RTYPE_405;
-							int isget = 0;
-							int uri_len = header_attr_lookup(request_uri, (char*)t->request_data, "get ", " ");
-							if (uri_len > 0) {
-								isget = 1;
-							} else {
-								uri_len = header_attr_lookup(request_uri, (char*)t->request_data, "head ", " ");
-							}
-							if (uri_len > 0) {
-								code = path_create(base_path, request_uri, file_path);
-								if (code == RTYPE_DIR) {
-									if (!dirlist) {
-										code = RTYPE_403;
-									} else if (request_uri[uri_len-1] != '/') {
-										code = RTYPE_302;
+						switch (code) {
+							case RTYPE_400:
+								RETURN_STRBUF(t, err_400);
+								break;
+							case RTYPE_DIR:  // Dir
+							case RTYPE_403:
+								RETURN_STRBUF(t, err_403);
+								break;
+							case RTYPE_404:
+								RETURN_STRBUF(t, err_404);
+								break;
+							case RTYPE_405:
+								RETURN_STRBUF(t, err_405);
+								break;
+							case RTYPE_FIL: // File
+							{
+								FILE* fd = fopen(file_path, "rb");
+								if (!fd) {
+									force_end = 1;
+								} else {
+									long long len = lof(fd);
+									const char* mimetype = mime_lookup(file_path);
+									if (t->fend < 0) {
+										fstart = len + t->fend; // +-
+										if (fstart < 0) fstart = 0;
+										t->fend = len - 1; // Last byte, not size
+									} else if (t->fend > len - 1) {
+										t->fend = len - 1; // Last byte, not size
+									}
+									long long content_length = t->fend - fstart + 1;
+
+									if (userange && isget) {
+										sprintf((char*)t->request_data, partial_206, fstart, t->fend, len, content_length, mimetype);
+										t->request_size = strlen((char*)t->request_data);
+									} else {
+										sprintf((char*)t->request_data, ok_200, content_length, mimetype);
+										t->request_size = strlen((char*)t->request_data);
+									}
+
+									if (isget) {
+										t->fdfile = fd;
+										fseeko(fd, fstart, SEEK_SET); // Seek the first byte
+									} else { // head
+										fclose(fd);
 									}
 								}
+								break;
 							}
-
-							switch (code) {
-								case RTYPE_400:
-									RETURN_STRBUF(t, err_400);
-									break;
-								case RTYPE_403:
-									RETURN_STRBUF(t, err_403);
-									break;
-								case RTYPE_404:
-									RETURN_STRBUF(t, err_404);
-									break;
-								case RTYPE_405:
-									RETURN_STRBUF(t, err_405);
-									break;
-								case RTYPE_302:
-									int host_len = header_attr_lookup(param_str, (char*)t->request_data, "host:", "\r\n");
-									if (host_len > 0 && host_len < (REQUEST_MAX_SIZE-sizeof(found_302)-4)) {
-										sprintf((char*)t->request_data, found_302, "http://", param_str, request_uri); // absolute url
-									} else {
-										sprintf((char*)t->request_data, found_302, "", "", request_uri); // relative url
-									}
-									t->request_size = strlen((char*)t->request_data);
-									break;
-								case RTYPE_DIR:  // Dir
-									if (isget)
-										t->dirlist = opendir(file_path);
-									sprintf((char*)t->request_data, dirlist_200, dirlist_size(file_path));
-									t->request_size = strlen((char*)t->request_data);
-									break;
-								case RTYPE_FIL: // File
-								{
-									FILE* fd = fopen(file_path, "rb");
-									if (!fd) {
-										force_end = 1;
-									} else {
-										long long len = lof(fd);
-										const char* mimetype = mime_lookup(file_path);
-										if (t->fend < 0) {
-											fstart = len + t->fend; // +-
-											if (fstart < 0) fstart = 0;
-											t->fend = len - 1; // Last byte, not size
-										} else if (t->fend > len - 1) {
-											t->fend = len - 1; // Last byte, not size
-										}
-										long long content_length = t->fend - fstart + 1;
-
-										if (userange && isget) {
-											sprintf((char*)t->request_data, partial_206, fstart, t->fend, len, content_length, mimetype);
-											t->request_size = strlen((char*)t->request_data);
-										} else {
-											sprintf((char*)t->request_data, ok_200, content_length, mimetype);
-											t->request_size = strlen((char*)t->request_data);
-										}
-
-										if (isget) {
-											t->fdfile = fd;
-											fseeko(fd, fstart, SEEK_SET); // Seek the first byte
-										} else { // head
-											fclose(fd);
-										}
-									}
-									break;
-								}
-							};
 						}
 						t->offset = 0;
 					}
@@ -359,16 +326,6 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 							// End of file, close the connection
 							force_end = 1;
 						}
-					} else if (t->dirlist) {
-						struct dirent *ep = readdir(t->dirlist);
-						if (ep) {
-							t->request_size = generate_dir_entry(t->request_data, ep);
-							t->offset = 0;
-						} else {
-							closedir(t->dirlist);
-							t->dirlist = 0;
-							force_end = 1;
-						}
 					} else {
 						force_end = 1;
 					}
@@ -410,10 +367,6 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 					fclose(t->fdfile);
 					t->fdfile = 0;
 				}
-				if (t->dirlist) {
-					closedir(t->dirlist);
-					t->dirlist = 0;
-				}
 				t->fd = -1;
 				num_active_clients--;
 
@@ -438,7 +391,6 @@ void server_run (unsigned int port, int ctimeout, char * base_path, int dirlist)
 int main(int argc, char** argv) {
 	unsigned int port = 8080;
 	int timeout = 8;
-	int dirlist = 0;
 	char base_path[MAX_PATH_LEN + 1];
 #ifdef HAVE_SETUID
 	char sw_user[256] = "nobody";
@@ -487,26 +439,6 @@ int main(int argc, char** argv) {
 				base_path[x] = 0;
 			}
 		}
-		// Auth
-		if (!strcmp(argv[i], "-a") || !strcmp(argv[i], "--auth")) {
-			if (++i >= argc) {
-				help = 1;
-				break;
-			}
-			int x;
-			for (x = 0; argv[i][x] && x < 127; x++) {
-				auth_str[x] = argv[i][x];
-			}
-			if (x == 127) {
-				puts("ERROR: Authorization string length exceeds maximum of 127 characters");
-				exit(1);
-			}
-			auth_str[x] = 0;
-		}
-		// Dir list
-		if (!strcmp(argv[i], "-l") || !strcmp(argv[i], "--list")) {
-			dirlist = 1;
-		}
 		// Help
 		if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") || !strcmp(argv[i], "-?")) {
 			help = 1;
@@ -528,13 +460,10 @@ int main(int argc, char** argv) {
 		puts("Usage: server [-p port] ...\n"
 			"    -p PORT       Port                     (8080)\n"
 			"    -t SECONDS    Timeout                  (8 seconds)\n"
-			"    -d DIR        Base Dir                 (working dir)\n"
-			"    -l            Enable dir lists         (off)\n"
 #ifdef HAVE_SETUID
-			"    -u USER       Switch to user           (nobody)\n"
+				 "    -u USER       Switch to user           (nobody)\n"
 #endif
-			"    -a STRING     HTTP Auth string, i.e.   (none)\n"
-			"                   \"Basic dXNlcjpwYXNz\""
+			"    -d DIR        Base Dir                 (working dir)"
 		);
 		exit(0);
 	}
@@ -590,7 +519,7 @@ int main(int argc, char** argv) {
 	}
 #endif
 
-	server_run(port, timeout, base_path, dirlist);
+	server_run(port, timeout, base_path);
 	return 0;
 }
 

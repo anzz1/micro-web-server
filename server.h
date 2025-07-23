@@ -74,7 +74,6 @@
 #define RTYPE_405	3
 #define RTYPE_403	4
 #define RTYPE_400	5
-#define RTYPE_302	6
 
 #define STATUS_REQ	0
 #define STATUS_RESP	1
@@ -148,6 +147,15 @@ static int strncmpi2(const char* s1, const char* s2, unsigned int len) {
   return (*s1 > *s2) ? 1 : -1;
 }
 
+char* strlower(char* s) {
+	char *p = s;
+	while (*p) {
+		if (*p > 64 && *p < 91) *p += 32;
+		p++;
+	}
+	return s;
+}
+
 // writes to param_str the value of the parameter in the request trimming whitespaces
 int header_attr_lookup(char * param_str, const char * request, const char * param, const char * param_end) {
 	char tmp[32] = "\r\n";
@@ -172,30 +180,6 @@ int header_attr_lookup(char * param_str, const char * request, const char * para
 	param_str[len] = 0;
 
 	return len;  // Returns the size of the parameter
-}
-
-unsigned int generate_dir_entry(void* out, const struct dirent* ep) {
-	const char* slash = ep->d_type == DT_DIR ? "/" : "";
-#ifdef HTMLLIST
-	return sprintf((char*)out, "<a href=\"%s%s\">%s%s</a><br>\n", ep->d_name, slash, ep->d_name, slash);
-#else
-	return sprintf((char*)out, "%s%s\n", ep->d_name, slash);
-#endif
-}
-
-unsigned int dirlist_size(const char* file_path) {
-	char tmp[4 * 1024];
-	unsigned int r = 0;
-	DIR* d = opendir(file_path);
-	if (!d) return 0;
-	while (1) {
-		struct dirent* ep = readdir(d);
-		if (!ep) break;
-
-		r += generate_dir_entry(tmp, ep);
-	}
-	closedir(d);
-	return r;
 }
 
 int parse_range_req(const char* req_val, long long* start, long long* end) {
@@ -267,9 +251,29 @@ void urldecode(char *url) {
 	*p = 0;
 }
 
-#define MAX_REQ_PATH_LEN (MAX_PATH_LEN - sizeof(DEFAULT_DOC))
+int path_exists(const char* path) {
+	// Check whether we have a directory or a file
+	void* dirp = opendir(path);
+	if (dirp) {
+		closedir(dirp);
+		return RTYPE_DIR;
+	} else {
+		// Try as file
+		FILE* fd = fopen(path, "rb");
+		if (fd) {
+			fclose(fd);
+			return RTYPE_FIL;
+		}
+	}
+	return RTYPE_404;
+}
+
+#define MAX_REQ_PATH_LEN MAX_PATH_LEN
 int path_create(const char* base_path, char* req_file, char* out_file) {
-	int i, j;
+	int i, j, k, ret;
+	int basepath_len;
+	int moddir_len;
+	char *p;
 
 	urldecode(req_file);
 	for (i = 0, j = 0; req_file[i]; i++, j++) {
@@ -285,15 +289,71 @@ int path_create(const char* base_path, char* req_file, char* out_file) {
 		}
 		if (j != i) req_file[j] = req_file[i];
 	}
+	req_file[j] = 0;
 	if (j > 0 && req_file[j - 1] == '.') {
 		return RTYPE_400;
 	}
-	req_file[j] = 0;
+	if (j > 3 && req_file[j - 4] == '.' &&
+			((req_file[j - 3] == 'c') || (req_file[j - 3] == 'C')) &&
+			((req_file[j - 2] == 'f') || (req_file[j - 2] == 'F')) &&
+			((req_file[j - 1] == 'g') || (req_file[j - 1] == 'G'))) { // disallow .cfg file access
+		return RTYPE_403;
+	}
+	if (stristr2(req_file, "/addons/")) { // disallow addons directory access
+		return RTYPE_403;
+	}
 
-	char* p = out_file;
-	for (i = 0, j = 0; base_path[i]; i++, j++) {
+	k = 0;
+	moddir_len = 0;
+	p = out_file;
+	for (i = 0; base_path[i]; i++) {
 		*p++ = base_path[i];
 	}
+	basepath_len = i;
+	j = basepath_len;
+	if (req_file[0] != '/') {
+		*p++ = '/';
+		j++;
+		k++;
+	}
+	for (i = 0; req_file[i] && j < MAX_REQ_PATH_LEN; i++, j++) {
+		*p++ = req_file[i];
+		if (req_file[i] == '/' && ++k == 2) {
+			moddir_len = i;
+		}
+	}
+	if (j == MAX_REQ_PATH_LEN || !moddir_len) {
+		return RTYPE_400;
+	}
+	*p = 0;
+
+	// Check whether we have a directory or a file
+	if (ret = path_exists(out_file)) {
+		return ret;
+	}
+
+	// Try volvo
+	p = out_file+basepath_len;
+	strcpy(p, "/valve");
+	p += 6;
+	j = basepath_len + 6;
+	for (i = moddir_len; req_file[i] && j < MAX_REQ_PATH_LEN; i++, j++) {
+		*p++ = req_file[i];
+	}
+	if (j == MAX_REQ_PATH_LEN) {
+		return RTYPE_400;
+	}
+	*p = 0;
+
+	// Check whether we have a directory or a file
+	if (ret = path_exists(out_file)) {
+		return ret;
+	}
+
+	// Try lowercase
+	strlower(req_file);
+	p = out_file+basepath_len;
+	j = basepath_len;
 	if (req_file[0] != '/') {
 		*p++ = '/';
 		j++;
@@ -307,44 +367,33 @@ int path_create(const char* base_path, char* req_file, char* out_file) {
 	*p = 0;
 
 	// Check whether we have a directory or a file
-	void* dirp = opendir(out_file);
-	if (dirp) {
-		closedir(dirp);
-		if (*(p-1) != '/') *p++ = '/';
+	if (ret = path_exists(out_file)) {
+		return ret;
+	}
 
-		// Try the index first
-		strcpy(p, DEFAULT_DOC);
-		FILE * fd = fopen(out_file, "rb");
-		if (fd) {
-			fclose(fd);
-			return RTYPE_FIL;
-		}
-		*p = 0;
+	// Try volvo+lowercase
+	p = out_file+basepath_len;
+	strcpy(p, "/valve");
+	p += 6;
+	j = basepath_len + 6;
+	for (i = moddir_len; req_file[i] && j < MAX_REQ_PATH_LEN; i++, j++) {
+		*p++ = req_file[i];
+	}
+	if (j == MAX_REQ_PATH_LEN) {
+		return RTYPE_400;
+	}
+	*p = 0;
 
-		return RTYPE_DIR;
-	} else {
-		// Try as file
-		FILE* fd = fopen(out_file, "rb");
-		if (fd) {
-			fclose(fd);
-			return RTYPE_FIL;
-		}
+	// Check whether we have a directory or a file
+	if (ret = path_exists(out_file)) {
+		return ret;
 	}
 
 	return RTYPE_404;
 }
 
 const char* mime_lookup(char* file) {
-	char* ext = file+strlen(file);
-	while (ext != file && *ext != '.') ext--;
-	if (*ext++ == '.' && *ext) {
-		for (unsigned int i = 1; i < sizeof(mtypes) / sizeof(struct mime_type); i++) {
-			if (!stricmp2(ext, mtypes[i].extension)) {
-				return mtypes[i].mime_type;
-			}
-		}
-	}
-	return mtypes[0].mime_type; // No extension or not found, defaulting
+	return "application/octet-stream";
 }
 
 long long lof(FILE* fd) {
@@ -354,3 +403,4 @@ long long lof(FILE* fd) {
 	fseeko(fd,pos,SEEK_SET);
 	return len;
 }
+
