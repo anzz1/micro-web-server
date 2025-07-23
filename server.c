@@ -4,10 +4,10 @@
 
 const char ok_200[]  = "HTTP/1.1 200 OK\r\nAccept-Ranges: bytes\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 const char found_302[] = "HTTP/1.1 302 Found\r\nLocation: %s%s%s/\r\nConnection: close\r\n\r\n";
-const char err_400[] = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+const char err_400[] = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n400 Bad Request\n";
 const char err_401[] = "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic\r\nConnection: close\r\n\r\n";
-const char err_403[] = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n";
-const char err_404[] = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
+const char err_403[] = "HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n403 Forbidden\n";
+const char err_404[] = "HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n404 Not Found\n";
 const char err_405[] = "HTTP/1.1 405 Method not allowed\r\nConnection: close\r\n\r\n";
 const char partial_206[]  = "HTTP/1.1 206 Partial content\r\nContent-Range: bytes %lld-%lld/%lld\r\nContent-Length: %lld\r\nContent-Type: %s\r\nConnection: close\r\n\r\n";
 
@@ -508,7 +508,7 @@ int main(int argc, char** argv) {
 			dirlist = 1;
 		}
 		// Help
-		if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help")) {
+		if (!strcmp(argv[i], "-h") || !strcmp(argv[i], "--help") || !strcmp(argv[i], "-?")) {
 			help = 1;
 			break;
 		}
