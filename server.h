@@ -66,7 +66,11 @@
 #include <time.h>
 
 #ifndef LLONG_MAX
-	#define LLONG_MAX 9223372036854775807LL
+#define LLONG_MAX 9223372036854775807LL
+#endif
+
+#ifndef COUNTOF
+#define COUNTOF(x) (sizeof(x)/sizeof(x[0]))
 #endif
 
 #define RTYPE_404	0
@@ -252,6 +256,17 @@ void urldecode(char *url) {
 	*p = 0;
 }
 
+int is_allowed_extension(const char* url) {
+	int url_len = strlen(url);
+	for (int i = 0; i < COUNTOF(allowedFileExtensions); i++) {
+		int ext_len = strlen(allowedFileExtensions[i]);
+		if (url_len < ext_len) continue;
+		if (!strncmpi2(url+url_len-ext_len, allowedFileExtensions[i], ext_len))
+			return 1;
+	}
+	return 0;
+}
+
 int path_exists(const char* path) {
 	// Check whether we have a directory or a file
 	void* dirp = opendir(path);
@@ -294,13 +309,10 @@ int path_create(const char* base_path, char* req_file, char* out_file) {
 	if (j > 0 && req_file[j - 1] == '.') {
 		return RTYPE_400;
 	}
-	if (j > 3 && req_file[j - 4] == '.' &&
-			((req_file[j - 3] == 'c') || (req_file[j - 3] == 'C')) &&
-			((req_file[j - 2] == 'f') || (req_file[j - 2] == 'F')) &&
-			((req_file[j - 1] == 'g') || (req_file[j - 1] == 'G'))) { // disallow .cfg file access
+	if (!is_allowed_extension(req_file)) {
 		return RTYPE_403;
 	}
-	if (stristr2(req_file, "/addons/")) { // disallow addons directory access
+	if (stristr2(req_file, "/addons/") || stristr2(req_file, "/cfg/") || stristr2(req_file, "/logs/")) { // disallow directory access
 		return RTYPE_403;
 	}
 
@@ -351,6 +363,9 @@ int path_create(const char* base_path, char* req_file, char* out_file) {
 		return ret;
 	}
 
+// Disable lowercasing code on Windows (Windows filesystem API is case-insensitive as-is)
+#ifndef _WIN32
+
 	// Try lowercase
 	strlower(req_file);
 	p = out_file+basepath_len;
@@ -389,6 +404,8 @@ int path_create(const char* base_path, char* req_file, char* out_file) {
 	if (ret = path_exists(out_file)) {
 		return ret;
 	}
+
+#endif // #ifndef _WIN32
 
 	return RTYPE_404;
 }

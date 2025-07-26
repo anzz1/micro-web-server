@@ -9,3 +9,27 @@
 #undef HAVE_SETUID
 #define USE_MSVCRT							// Use msvcrt instead of ucrt
 #endif
+
+static const char* allowedFileExtensions[] = {
+	".bmp",
+	".bsp",
+	".gz",
+	".html",
+	".htm",
+	".lmp",
+	".mdl",
+	".mp3",
+	".nav",
+	".pak",
+	".pcx",
+	".res",
+	".sc",
+	".seq",
+	".spr",
+	".tga",
+	".txt",
+	".vpk",
+	".wad",
+	".wav",
+	".wpt"
+};
