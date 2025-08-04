@@ -484,10 +484,10 @@ int main(int argc, char** argv) {
 	listenfd = socket(AF_INET, SOCK_STREAM, 0);
 	memset(&servaddr, 0, sizeof(servaddr));
 	servaddr.sin_family = AF_INET;
-	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	servaddr.sin_addr.s_addr = INADDR_ANY;
 	servaddr.sin_port = htons(port);
-	int yes = 1;
-	setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int));
+	int no = 0;
+	setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &no, sizeof(int));
 	if (bind(listenfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
 		printf("ERROR: Could not bind port:%u\n", port);
 		perror("bind");

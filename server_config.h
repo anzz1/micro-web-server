@@ -17,6 +17,7 @@ static const char* allowedFileExtensions[] = {
 	".html",
 	".htm",
 	".lmp",
+	".lst",
 	".mdl",
 	".mp3",
 	".nav",
