@@ -134,7 +134,7 @@ void server_run (unsigned int port, int ctimeout, char * base_path) {
 		exit(1);
 	}
 
-	printf("Server started on port %u\n", port);
+	printf("Server started on port %u\nSet your sv_downloadurl to \"http://1.2.3.4:%u/cstrike/\"\nReplace \"cstrike\" with your mod and \"1.2.3.4\" with your IP\n", port, port);
 
 	for (i = 0; i < MAXCLIENTS+1; i++) {
 		fdtable[i].fd = -1;
